@@ -63,9 +63,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .hero__poster,.hero__video,.hero__canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;pointer-events:none}
 .hero__poster{z-index:0;background:var(--bg)}
 .hero__poster img{width:100%;height:100%;object-fit:cover;object-position:center}
-.hero__video{z-index:1;max-width:none;opacity:0;background:var(--bg)}
+.hero__video{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
+.hero__video.is-scrub-visible{opacity:1}
 .hero__canvas{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:opacity .16s linear}
 .hero__canvas.is-ready{opacity:1}
+.hero__canvas.is-scrub-hidden{opacity:0!important;transition:none}
 .hero__vignette{position:absolute;z-index:2;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 55%,transparent 58%,rgba(0,0,0,.38) 100%),linear-gradient(transparent 88%,rgba(5,6,7,.42))}
 .hero__grain{position:absolute;z-index:3;inset:-50%;pointer-events:none;opacity:.03;mix-blend-mode:overlay;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
