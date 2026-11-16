@@ -1,83 +1,83 @@
 {
-    "version":  9,
-    "breakpoint":  "(max-width: 760px)",
-    "desktop":  {
-                    "src":  "assets/hero/(C)-hero-v1-desktop.mp4?v=old-angle-kling-2026-11-15-b2b033c7-fdce2750",
-                    "poster":  "assets/hero/(C)-hero-v1-desktop-start.png?v=old-angle-kling-2026-11-15-b2b033c7-fdce2750",
-                    "width":  1920,
-                    "height":  1080,
-                    "fps":  24,
-                    "frameCount":  281,
-                    "scrubEncoding":  "short-gop-6-adjacent",
-                    "renderMode":  "canvas-frame-lock"
-                },
-    "mobile":  {
-                   "src":  "assets/hero/(C)-hero-v1-mobile.mp4?v=old-angle-kling-2026-11-15-b2b033c7-c5703535",
-                   "poster":  "assets/hero/(C)-hero-v1-mobile-start.png?v=old-angle-kling-2026-11-15-b2b033c7-c5703535",
-                   "width":  1080,
-                   "height":  1920,
-                   "fps":  24,
-                   "frameCount":  281,
-                   "scrubEncoding":  "short-gop-6-adjacent",
-                   "renderMode":  "canvas-frame-lock",
-                   "cropTracking":  "car-and-garage-dynamic"
-               },
-    "beats":  [
-                  [
-                      0,
-                      0.08
-                  ],
-                  [
-                      0.1,
-                      0.36
-                  ],
-                  [
-                      0.42,
-                      0.6
-                  ],
-                  [
-                      0.88,
-                      1.01
-                  ]
-              ],
-    "cues":  [
-                 {
-                     "at":  0.02,
-                     "sound":  "engine",
-                     "args":  [
-                                  false
-                              ]
-                 },
-                 {
-                     "at":  0.14,
-                     "sound":  "rumble"
-                 },
-                 {
-                     "at":  0.44,
-                     "sound":  "hiss",
-                     "args":  [
-                                  2.4,
-                                  0.3
-                              ]
-                 },
-                 {
-                     "at":  0.55,
-                     "sound":  "ding"
-                 },
-                 {
-                     "at":  0.57,
-                     "sound":  "rumble"
-                 },
-                 {
-                     "at":  0.7,
-                     "sound":  "engine",
-                     "args":  [
-                                  true
-                              ]
-                 },
-                 {
-                     "at":  0.9,
-                     "sound":  "whoosh"
-                 }
-             ]
+  "version": 10,
+  "breakpoint": "(max-width: 760px)",
+  "desktop": {
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=dirty-in-clean-out-2026-11-16-a3fa6024-cb9a2c14",
+    "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=dirty-in-clean-out-2026-11-16-a3fa6024-cb9a2c14",
+    "width": 1920,
+    "height": 1080,
+    "fps": 24,
+    "frameCount": 281,
+    "scrubEncoding": "short-gop-6-adjacent",
+    "renderMode": "canvas-frame-lock"
+  },
+  "mobile": {
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=dirty-in-clean-out-2026-11-16-a3fa6024-589f2fc5",
+    "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=dirty-in-clean-out-2026-11-16-a3fa6024-589f2fc5",
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "frameCount": 281,
+    "scrubEncoding": "short-gop-6-adjacent",
+    "renderMode": "canvas-frame-lock",
+    "cropTracking": "car-and-garage-dynamic"
+  },
+  "beats": [
+    [
+      0,
+      0.08
+    ],
+    [
+      0.1,
+      0.36
+    ],
+    [
+      0.42,
+      0.6
+    ],
+    [
+      0.88,
+      1.01
+    ]
+  ],
+  "cues": [
+    {
+      "at": 0.02,
+      "sound": "engine",
+      "args": [
+        false
+      ]
+    },
+    {
+      "at": 0.14,
+      "sound": "rumble"
+    },
+    {
+      "at": 0.44,
+      "sound": "hiss",
+      "args": [
+        2.4,
+        0.3
+      ]
+    },
+    {
+      "at": 0.55,
+      "sound": "ding"
+    },
+    {
+      "at": 0.57,
+      "sound": "rumble"
+    },
+    {
+      "at": 0.7,
+      "sound": "engine",
+      "args": [
+        true
+      ]
+    },
+    {
+      "at": 0.9,
+      "sound": "whoosh"
+    }
+  ]
 }
