@@ -129,6 +129,8 @@ let heroDriveActive = false;
 let heroInputFrame = 0;
 let heroExpectedScrollY = null;
 let heroExpectedScrollRaf = 0;
+let pendingHeroExitPixels = 0;
+let pendingHeroExitRaf = 0;
 let heroTouchY = null;
 // WheelEvent.deltaY is not a physical notch. Depending on the mouse/driver,
 // one notch can arrive as 40, 53, 100 or 120 pixels (or 3 lines). Mapping
@@ -394,6 +396,20 @@ function commitPresentedHeroFrame(frame) {
   if (!heroDriveActive) return;
   renderHeroPresentation(heroProgressForFrame(presentedFrame));
   syncHeroScrollToPresentedFrame();
+
+  const lastFrame = activeVariant.frameCount - 1;
+  if (pendingHeroExitPixels > 0 && presentedFrame === lastFrame && !pendingHeroExitRaf) {
+    // A third gesture may arrive while the exact-frame runner is still catching
+    // up. Wait one more paint so the clean final frame is genuinely visible,
+    // then honor that already-issued gesture and enter section 2.
+    pendingHeroExitRaf = requestAnimationFrame(() => {
+      pendingHeroExitRaf = 0;
+      if (!activeVariant || presentedFrame !== activeVariant.frameCount - 1 || pendingHeroExitPixels <= 0) return;
+      const exitPixels = pendingHeroExitPixels;
+      pendingHeroExitPixels = 0;
+      releaseHeroDriveAndScroll(exitPixels);
+    });
+  }
 }
 
 function presentNextHeroFrame() {
@@ -590,7 +606,16 @@ function activateHeroDrive() {
   syncHeroScrollToPresentedFrame();
 }
 
+function cancelPendingHeroExit() {
+  pendingHeroExitPixels = 0;
+  if (pendingHeroExitRaf) {
+    cancelAnimationFrame(pendingHeroExitRaf);
+    pendingHeroExitRaf = 0;
+  }
+}
+
 function releaseHeroDrive() {
+  cancelPendingHeroExit();
   if (!heroDriveActive) return;
   heroDriveActive = false;
   heroExpectedScrollY = null;
@@ -603,6 +628,14 @@ function releaseHeroDrive() {
     lenis.scrollTo(window.scrollY, { immediate: true, force: true });
   }
   queueHeroRender();
+}
+
+function releaseHeroDriveAndScroll(pixels) {
+  releaseHeroDrive();
+  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const destination = Math.max(0, Math.min(maxScroll, window.scrollY + pixels));
+  if (lenis) lenis.scrollTo(destination, { immediate: true, force: true });
+  else window.scrollTo(0, destination);
 }
 
 function shouldCaptureHeroDirection(direction) {
@@ -620,17 +653,32 @@ function driveHeroByPixels(pixelDelta, event) {
   const direction = Math.sign(pixels);
   if (!direction) return false;
 
+  const lastFrame = activeVariant.frameCount - 1;
+  const desired = targetFrame >= 0 ? targetFrame : HeroCore.progressToFrame(currentProgress, activeVariant.frameCount);
+  const shown = presentedFrame >= 0 ? presentedFrame : desired;
+
+  if (direction < 0) cancelPendingHeroExit();
+
+  // The first two notches target the full story. If a third downward gesture
+  // arrives before the ordered frame runner reaches the end, remember it and
+  // release only after the final clean frame has had a real paint opportunity.
+  if (direction > 0 && desired >= lastFrame && shown < lastFrame) {
+    activateHeroDrive();
+    if (event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+    pendingHeroExitPixels = Math.max(pendingHeroExitPixels, Math.abs(pixels));
+    return true;
+  }
+
   if (!shouldCaptureHeroDirection(direction)) {
     if (heroDriveActive) {
-      releaseHeroDrive();
       if (event) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-        const destination = Math.max(0, Math.min(maxScroll, window.scrollY + pixels));
-        if (lenis) lenis.scrollTo(destination, { immediate: true, force: true });
-        else window.scrollTo(0, destination);
       }
+      releaseHeroDriveAndScroll(pixels);
       return true;
     }
     return false;
@@ -642,7 +690,6 @@ function driveHeroByPixels(pixelDelta, event) {
     event.stopImmediatePropagation();
   }
 
-  const lastFrame = activeVariant.frameCount - 1;
   const frameDelta = pixels / heroWheelPixelsPerStory * lastFrame;
   heroInputFrame = Math.max(0, Math.min(lastFrame, heroInputFrame + frameDelta));
   requestHeroFrame(Math.round(heroInputFrame));
@@ -704,6 +751,7 @@ function heroDebugState() {
     heroEnd: heroGeometry && heroGeometry.end,
     frameCount: activeVariant && activeVariant.frameCount,
     wheelStepsPerStory: HERO_WHEEL_STEPS_PER_STORY,
+    pendingExitPixels: pendingHeroExitPixels,
     lastWheel: lastHeroWheelDiagnostics
   };
 }
