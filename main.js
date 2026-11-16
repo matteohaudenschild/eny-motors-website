@@ -114,7 +114,6 @@ let frameSeekedVideo = null;
 let frameSeekedHandler = null;
 let frameFallbackTimer = 0;
 let frameCommitRaf = 0;
-let frameNextRaf = 0;
 let currentProgress = 0;
 let lastProgress = 0;
 let lastRequestedFrame = -1;
@@ -138,7 +137,7 @@ let heroTouchY = null;
 // small high-resolution trackpad deltas remain continuous.
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
 const HERO_WHEEL_STEPS_PER_STORY = 4;
-const HERO_TRACKPAD_GAIN = 4.8;
+const HERO_TRACKPAD_GAIN = 9.6;
 const heroWheelPixelsPerStory = HERO_DISCRETE_WHEEL_PIXELS * HERO_WHEEL_STEPS_PER_STORY;
 let lastHeroWheelDiagnostics = null;
 
@@ -337,7 +336,9 @@ function paintHeroFrame(video, variant, frame) {
     canvasFrameHistory.push(canvasPresentedFrame);
     if (canvasFrameHistory.length > 1200) canvasFrameHistory.splice(0, 600);
   }
-  heroCanvas.classList.add('is-ready');
+  // Frame 0 deliberately uses the separately approved, sharper hero poster.
+  // Once the story moves, the canvas takes over and remains the visible source.
+  heroCanvas.classList.toggle('is-ready', canvasPresentedFrame > 0);
   return true;
 }
 
@@ -359,12 +360,10 @@ function cancelHeroFrameRunner() {
   }
   if (frameFallbackTimer) clearTimeout(frameFallbackTimer);
   if (frameCommitRaf) cancelAnimationFrame(frameCommitRaf);
-  if (frameNextRaf) cancelAnimationFrame(frameNextRaf);
   frameSeekedVideo = null;
   frameSeekedHandler = null;
   frameFallbackTimer = 0;
   frameCommitRaf = 0;
-  frameNextRaf = 0;
 }
 
 function heroProgressForFrame(frame) {
@@ -421,13 +420,11 @@ function presentNextHeroFrame() {
       frameCommitRaf = 0;
       paintHeroFrame(video, activeVariant, nextFrame);
       commitPresentedHeroFrame(nextFrame);
-      // Keep the decoded frame on screen for one full paint before starting
-      // the next adjacent seek. Without this second RAF, reverse scrubbing can
-      // decode every frame but replace it again before Chromium paints it.
-      frameNextRaf = requestAnimationFrame(() => {
-        frameNextRaf = 0;
-        presentNextHeroFrame();
-      });
+      // drawImage() has synchronously copied the decoded pixels into the visible
+      // canvas. Start the next seek immediately; its next draw is still RAF-gated.
+      // This preserves the ordered +/-1 frame history without adding a second
+      // full display frame of latency for every source frame.
+      presentNextHeroFrame();
     });
   };
 
@@ -449,7 +446,7 @@ function requestHeroFrame(frame) {
     return;
   }
 
-  if (!frameSeekedHandler && !frameFallbackTimer && !frameCommitRaf && !frameNextRaf &&
+  if (!frameSeekedHandler && !frameFallbackTimer && !frameCommitRaf &&
       lastRequestedFrame !== targetFrame) {
     presentNextHeroFrame();
   }

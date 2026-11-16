@@ -1,9 +1,9 @@
 {
-  "version": 10,
+  "version": 11,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
-    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=dirty-in-clean-out-2026-11-16-a3fa6024-cb9a2c14",
-    "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=dirty-in-clean-out-2026-11-16-a3fa6024-cb9a2c14",
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
+    "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
     "width": 1920,
     "height": 1080,
     "fps": 24,
@@ -12,8 +12,8 @@
     "renderMode": "canvas-frame-lock"
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=dirty-in-clean-out-2026-11-16-a3fa6024-589f2fc5",
-    "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=dirty-in-clean-out-2026-11-16-a3fa6024-589f2fc5",
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
+    "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
     "width": 1080,
     "height": 1920,
     "fps": 24,
