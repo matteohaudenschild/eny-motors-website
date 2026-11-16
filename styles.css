@@ -64,7 +64,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .hero__poster{z-index:0;background:var(--bg)}
 .hero__poster img{width:100%;height:100%;object-fit:cover;object-position:center}
 .hero__video{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
-.hero__video.is-scrub-visible{opacity:1}
+.hero__video.is-ready,.hero__video.is-scrub-visible{opacity:1}
 .hero__canvas{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
 .hero__canvas.is-ready{opacity:1}
 .hero__canvas.is-scrub-hidden{opacity:0!important;transition:none}

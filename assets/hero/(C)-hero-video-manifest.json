@@ -1,28 +1,32 @@
 {
-  "version": 12,
+  "version": 13,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
-    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=paused-gop2-three-roll-v19-2cd0d503",
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=natural-speed-wheel-v20-2cd0d503",
     "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
     "width": 1920,
     "height": 1080,
     "fps": 24,
     "frameCount": 281,
     "scrubEncoding": "short-gop-2-crf20",
-    "renderMode": "paused-single-flight-canvas",
-    "interaction": "three-gesture-240ms-scrub"
+    "renderMode": "visible-native-video",
+    "interaction": "wheel-active-natural-speed-1x",
+    "playbackRate": 1,
+    "idleStopMs": 80
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=paused-gop2-three-roll-v19-645a4cd8",
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=natural-speed-wheel-v20-645a4cd8",
     "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
     "width": 1080,
     "height": 1920,
     "fps": 24,
     "frameCount": 281,
     "scrubEncoding": "short-gop-2-crf20",
-    "renderMode": "paused-single-flight-canvas",
+    "renderMode": "visible-native-video",
     "cropTracking": "car-and-garage-dynamic",
-    "interaction": "three-gesture-240ms-scrub"
+    "interaction": "wheel-active-natural-speed-1x",
+    "playbackRate": 1,
+    "idleStopMs": 80
   },
   "beats": [
     [

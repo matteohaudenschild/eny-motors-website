@@ -1,8 +1,8 @@
 /* ENY Motors – main.js
-   Hero: a fully preloaded, seek-optimized MP4 is decoded while paused and
-   painted to an always-stable canvas. Three deliberate wheel gestures cover
-   the story through short, deterministic frame scrubs; it never free-plays.
-   Desktop and mobile use separate compositions from the video manifest.
+   Hero: the fully preloaded HD master remains the visible layer and runs at
+   its real 1× speed only while wheel/touch/key input stays active. It pauses
+   in place after roughly 80–100 ms of inactivity, with no catch-up or layer
+   handoff. Desktop and mobile use separate manifest compositions.
 */
 (() => {
 'use strict';
@@ -80,9 +80,8 @@ const Sound = {
 $('#soundBtn').addEventListener('click', () => Sound.set(!Sound.on));
 
 /* ===================================================== HERO VIDEO
-   The MP4 is a hidden, paused decoder. Every visible state is copied to the
-   canvas after a completed seek. A wheel packet selects a target one third of
-   the story away and a bounded 240 ms scrub presents intermediate frames. */
+   Forward motion is the visible native video at playbackRate 1. Reverse uses
+   wall-clock currentTime steps on the GOP-2 master. Both stop on wheel idle. */
 const HeroCore = window.ENYHeroCore;
 // Seeking exactly onto a media timestamp can make Chromium resolve to the next
 // decoded frame. A 1 ms pre-boundary guard keeps every requested frame exact.
@@ -92,7 +91,6 @@ const heroSticky = $('.hero__sticky', hero);
 const heroPoster = $('#heroPoster');
 let heroVideo = $('#heroVideo');
 const heroCanvas = $('#heroCanvas');
-const heroCanvasContext = heroCanvas && heroCanvas.getContext('2d', { alpha: false });
 const beats = [...document.querySelectorAll('.beat')];
 const progEl = $('#heroProgress');
 const cue = $('#scrollCue');
@@ -111,8 +109,6 @@ let variantAbort = null;
 let variantSerial = 0;
 let renderRaf = 0;
 let measureRaf = 0;
-let frameCommitRaf = 0;
-let heroSeekCoalescer = null;
 let currentProgress = 0;
 let lastProgress = 0;
 let lastRequestedFrame = -1;
@@ -133,33 +129,27 @@ let heroTouchY = null;
 let heroMotionRaf = 0;
 let heroMotionActive = false;
 let heroMotionDirection = 0;
-let heroPendingDirection = 0;
+let heroMotionMode = 'idle';
 let heroMotionLastInputAt = 0;
 let heroMotionStartedAt = 0;
-let heroMotionFromFrame = 0;
-let heroMotionToFrame = 0;
-let heroMotionDesiredFrame = 0;
+let heroMotionStoppedAt = 0;
+let heroMotionActiveMs = 0;
 let heroMotionInputSerial = 0;
+let heroIdleTimer = 0;
+let heroReverseOriginAt = 0;
+let heroReverseOriginTime = 0;
+let heroVideoFrameCallbackId = 0;
+let heroTimeUpdateVideo = null;
+let heroTimeUpdateHandler = null;
 let heroWheelPacketLastAt = -Infinity;
 let heroWheelPacketDirection = 0;
 let heroBoundaryDirection = 0;
 let heroBoundaryLastInputAt = 0;
-// Hardware often emits several WheelEvents for one physical roll. Events in
-// this small packet window select one target, not several thirds of the story.
-const HERO_GESTURE_GAP_MS = 90;
-// A discrete event has no duration. This tightly bounded micro-scrub is the
-// minimum compromise that can show real intermediate frames instead of a jump.
-const HERO_SCRUB_MS = 240;
-// WheelEvent.deltaY is not a physical notch. Depending on the mouse/driver,
-// one notch can arrive as 40, 53, 100 or 120 pixels (or 3 lines). Mapping
-// raw pixels directly made identical mouse movements need anywhere from 8 to
-// roughly 30 turns. Discrete wheel input is now hardware-normalized while
-// small high-resolution trackpad deltas remain continuous.
+// Wheel packets are considered active until 80 ms after their latest event.
+// During that window the master advances at exactly one source second per
+// wall-clock second. No wheel input means no media motion.
+const HERO_INPUT_IDLE_MS = 80;
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
-const HERO_WHEEL_STEPS_PER_STORY = 3;
-// Three tiny remote/trackpad impulses of deltaY=8 cover the same 360 px story.
-const HERO_TRACKPAD_GAIN = 15;
-const heroWheelPixelsPerStory = HERO_DISCRETE_WHEEL_PIXELS * HERO_WHEEL_STEPS_PER_STORY;
 let lastHeroWheelDiagnostics = null;
 
 function abortError() {
@@ -331,45 +321,17 @@ function selectedVariantKey() {
   return heroMediaQuery && heroMediaQuery.matches ? 'mobile' : 'desktop';
 }
 
-function applyHeroFrame(frame) {
-  if (!heroVideo || !activeVariant) return;
-  const nextFrame = Math.max(0, Math.min(activeVariant.frameCount - 1, Math.round(frame)));
-  lastRequestedFrame = nextFrame;
-  heroVideo.pause();
-  const targetTime = HeroCore.frameToTime(nextFrame, activeVariant.fps, activeVariant.frameCount);
-  if (Math.abs((Number(heroVideo.currentTime) || 0) - targetTime) <= 0.4 / activeVariant.fps) return;
-  try {
-    heroVideo.currentTime = Math.max(0, targetTime - HERO_SEEK_BOUNDARY_GUARD_SECONDS);
-  } catch (error) {
-    console.warn('Hero frame seek failed:', error);
-  }
-}
-
-function paintHeroFrame(video, variant, frame) {
-  if (!heroCanvas || !heroCanvasContext || !video || !variant || video.readyState < 2) return false;
-  if (heroCanvas.width !== variant.width) heroCanvas.width = variant.width;
-  if (heroCanvas.height !== variant.height) heroCanvas.height = variant.height;
-  heroCanvasContext.imageSmoothingEnabled = true;
-  heroCanvasContext.imageSmoothingQuality = 'high';
-  heroCanvasContext.drawImage(video, 0, 0, variant.width, variant.height);
-  canvasPresentedFrame = Math.max(0, Math.min(variant.frameCount - 1, Math.round(frame)));
-  if (canvasFrameHistory.at(-1) !== canvasPresentedFrame) {
-    canvasFrameHistory.push(canvasPresentedFrame);
-    canvasPresentationHistory.push({ frame: canvasPresentedFrame, now: performance.now() });
-    if (canvasFrameHistory.length > 1200) canvasFrameHistory.splice(0, 600);
-    if (canvasPresentationHistory.length > 1200) canvasPresentationHistory.splice(0, 600);
-  }
-  // Frame 0 deliberately uses the separately approved, sharper hero poster.
-  // Once the story moves, the canvas takes over and remains the visible source.
-  heroCanvas.classList.toggle('is-ready', canvasPresentedFrame > 0);
-  return true;
-}
-
 function cancelHeroFrameRunner() {
-  if (heroSeekCoalescer) heroSeekCoalescer.destroy();
-  if (frameCommitRaf) cancelAnimationFrame(frameCommitRaf);
-  heroSeekCoalescer = null;
-  frameCommitRaf = 0;
+  if (heroVideoFrameCallbackId && heroVideo && typeof heroVideo.cancelVideoFrameCallback === 'function') {
+    heroVideo.cancelVideoFrameCallback(heroVideoFrameCallbackId);
+  }
+  if (heroTimeUpdateVideo && heroTimeUpdateHandler) {
+    heroTimeUpdateVideo.removeEventListener('timeupdate', heroTimeUpdateHandler);
+    heroTimeUpdateVideo.removeEventListener('seeked', heroTimeUpdateHandler);
+  }
+  heroVideoFrameCallbackId = 0;
+  heroTimeUpdateVideo = null;
+  heroTimeUpdateHandler = null;
 }
 
 function heroProgressForFrame(frame) {
@@ -407,27 +369,25 @@ function heroFrameForMediaTime(mediaTime) {
   ));
 }
 
-function rememberLiveHeroFrame(frame) {
-  canvasPresentedFrame = frame;
+function rememberLiveHeroFrame(frame, now = performance.now(), mediaTime = null) {
   if (canvasFrameHistory.at(-1) !== frame) {
     canvasFrameHistory.push(frame);
+    canvasPresentationHistory.push({
+      frame,
+      now,
+      mediaTime: Number.isFinite(Number(mediaTime)) ? Number(mediaTime) : null,
+      mode: heroMotionMode
+    });
     if (canvasFrameHistory.length > 1200) canvasFrameHistory.splice(0, 600);
+    if (canvasPresentationHistory.length > 1200) canvasPresentationHistory.splice(0, 600);
   }
 }
 
-function showHeroStartPoster() {
+function showHeroVideo() {
   if (!heroVideo || !heroCanvas) return;
-  heroVideo.pause();
-  heroVideo.classList.remove('is-scrub-visible');
-  heroCanvas.classList.remove('is-scrub-hidden', 'is-ready');
-}
-
-function showHeroCanvas() {
-  if (!heroVideo || !heroCanvas) return;
-  heroVideo.pause();
-  heroVideo.classList.remove('is-scrub-visible');
-  heroCanvas.classList.remove('is-scrub-hidden');
-  if (canvasPresentedFrame > 0) heroCanvas.classList.add('is-ready');
+  heroVideo.classList.add('is-ready', 'is-scrub-visible');
+  heroCanvas.classList.remove('is-ready');
+  heroCanvas.classList.add('is-scrub-hidden');
 }
 
 function clearHeroBoundaryLock() {
@@ -441,7 +401,7 @@ function resetHeroGesturePacket() {
 }
 
 function settleHeroBoundary(frame) {
-  if (!activeVariant || frame !== targetFrame || heroMotionActive) return;
+  if (!activeVariant) return;
   const lastFrame = activeVariant.frameCount - 1;
   if (frame <= 0) heroBoundaryDirection = -1;
   else if (frame >= lastFrame) heroBoundaryDirection = 1;
@@ -451,135 +411,149 @@ function settleHeroBoundary(frame) {
 
 function stopHeroMotion(options = {}) {
   const wasActive = heroMotionActive;
+  if (heroIdleTimer) clearTimeout(heroIdleTimer);
+  heroIdleTimer = 0;
   heroMotionActive = false;
   if (heroMotionRaf) cancelAnimationFrame(heroMotionRaf);
   heroMotionRaf = 0;
   heroMotionDirection = 0;
-  if (options.clearBoundary) heroPendingDirection = 0;
+  heroMotionMode = 'idle';
+  heroMotionStoppedAt = performance.now();
+  if (wasActive && heroMotionStartedAt > 0) {
+    heroMotionActiveMs += Math.max(0, heroMotionStoppedAt - heroMotionStartedAt);
+  }
   if (heroVideo) heroVideo.pause();
 
   if (options.clearBoundary) clearHeroBoundaryLock();
   if (options.resetGesture) resetHeroGesturePacket();
-  if (options.settleTarget && activeVariant && heroMotionToFrame >= 0) {
-    heroMotionDesiredFrame = heroMotionToFrame;
-    requestHeroFrame(heroMotionToFrame);
+  if (heroVideo && activeVariant) {
+    const frame = heroFrameForMediaTime(heroVideo.currentTime);
+    targetFrame = frame;
+    heroInputFrame = frame;
+    if (frame !== presentedFrame) {
+      rememberLiveHeroFrame(frame, heroMotionStoppedAt, heroVideo.currentTime);
+      commitPresentedHeroFrame(frame);
+    }
+    settleHeroBoundary(frame);
   }
   return wasActive;
 }
 
-function heroMotionLoop(now) {
-  heroMotionRaf = 0;
-  if (!heroMotionActive || !activeVariant) return;
-
-  const elapsed = Math.max(0, now - heroMotionStartedAt);
-  const t = Math.min(1, elapsed / HERO_SCRUB_MS);
-  heroMotionDesiredFrame = heroMotionFromFrame +
-    (heroMotionToFrame - heroMotionFromFrame) * t;
-  requestHeroFrame(Math.round(heroMotionDesiredFrame));
-
-  if (t >= 1) {
-    stopHeroMotion({ settleTarget: true });
-    return;
-  }
-  heroMotionRaf = requestAnimationFrame(heroMotionLoop);
+function armHeroIdleStop() {
+  if (heroIdleTimer) clearTimeout(heroIdleTimer);
+  heroIdleTimer = setTimeout(() => stopHeroMotion({ reason: 'input-idle' }), HERO_INPUT_IDLE_MS);
 }
 
-function startHeroScrubToFrame(frame, inputAt = performance.now()) {
-  if (!activeVariant) return false;
-  const lastFrame = activeVariant.frameCount - 1;
-  const fromFrame = Math.max(0, Math.min(lastFrame,
-    presentedFrame >= 0 ? presentedFrame : heroInputFrame
-  ));
-  const toFrame = Math.max(0, Math.min(lastFrame, Math.round(frame)));
+function heroReverseLoop(now) {
+  heroMotionRaf = 0;
+  if (!heroMotionActive || heroMotionMode !== 'reverse' || !heroVideo || !activeVariant) return;
+  const elapsed = Math.max(0, (now - heroReverseOriginAt) / 1000);
+  const targetTime = Math.max(0, heroReverseOriginTime - elapsed);
+  if (targetTime <= 0) {
+    heroVideo.currentTime = 0;
+    stopHeroMotion({ reason: 'start-boundary' });
+    return;
+  }
+  heroVideo.currentTime = targetTime;
+  heroMotionRaf = requestAnimationFrame(heroReverseLoop);
+}
 
+function startHeroForward() {
+  if (!heroVideo || !activeVariant) return false;
+  const wasActive = heroMotionActive;
   if (heroMotionRaf) cancelAnimationFrame(heroMotionRaf);
   heroMotionRaf = 0;
-  heroMotionFromFrame = fromFrame;
-  heroMotionToFrame = toFrame;
-  heroMotionDesiredFrame = fromFrame;
-  heroMotionStartedAt = inputAt;
-  heroMotionLastInputAt = inputAt;
-  heroMotionDirection = Math.sign(toFrame - fromFrame);
-  heroPendingDirection = heroMotionDirection;
-  targetFrame = toFrame;
-  showHeroCanvas();
-
-  if (!heroMotionDirection) {
-    heroMotionActive = false;
-    requestHeroFrame(toFrame);
+  const lastFrame = activeVariant.frameCount - 1;
+  if (heroFrameForMediaTime(heroVideo.currentTime) >= lastFrame) {
+    stopHeroMotion({ reason: 'end-boundary' });
     return false;
   }
-
+  showHeroVideo();
   heroMotionActive = true;
-  heroMotionRaf = requestAnimationFrame(heroMotionLoop);
+  if (!wasActive) heroMotionStartedAt = performance.now();
+  heroMotionDirection = 1;
+  heroMotionMode = 'forward';
+  heroVideo.playbackRate = 1;
+  const started = heroVideo.play();
+  if (started && typeof started.catch === 'function') {
+    started.catch(error => {
+      if (error && error.name === 'AbortError') return;
+      console.warn('Hero natural-speed playback failed:', error);
+      stopHeroMotion({ reason: 'play-error' });
+    });
+  }
   return true;
 }
 
-function startOrExtendHeroMotion(direction, inputAt = performance.now(), gestureSteps = 1) {
+function startHeroReverse() {
+  if (!heroVideo || !activeVariant) return false;
+  const wasActive = heroMotionActive;
+  heroVideo.pause();
+  if (heroVideo.currentTime <= 0) {
+    stopHeroMotion({ reason: 'start-boundary' });
+    return false;
+  }
+  showHeroVideo();
+  heroMotionActive = true;
+  if (!wasActive) heroMotionStartedAt = performance.now();
+  heroMotionDirection = -1;
+  heroMotionMode = 'reverse';
+  heroReverseOriginAt = performance.now();
+  heroReverseOriginTime = heroVideo.currentTime;
+  if (!heroMotionRaf) heroMotionRaf = requestAnimationFrame(heroReverseLoop);
+  return true;
+}
+
+function startOrExtendHeroMotion(direction, inputAt = performance.now()) {
   if (!activeVariant || !direction) return false;
   const isNewGesture = direction !== heroWheelPacketDirection ||
-    inputAt - heroWheelPacketLastAt > HERO_GESTURE_GAP_MS;
+    inputAt - heroWheelPacketLastAt > HERO_INPUT_IDLE_MS;
 
   heroWheelPacketLastAt = inputAt;
   heroWheelPacketDirection = direction;
   heroMotionLastInputAt = inputAt;
-  if (!isNewGesture) return false;
-
-  const lastFrame = activeVariant.frameCount - 1;
-  const baseTarget = Number.isFinite(heroInputFrame)
-    ? heroInputFrame
-    : (targetFrame >= 0 ? targetFrame : Math.max(0, presentedFrame));
-  heroInputFrame = Math.max(0, Math.min(lastFrame,
-    baseTarget + direction * Math.max(1, Math.min(HERO_WHEEL_STEPS_PER_STORY, gestureSteps)) *
-      lastFrame / HERO_WHEEL_STEPS_PER_STORY
-  ));
-  heroMotionInputSerial += 1;
+  if (isNewGesture) heroMotionInputSerial += 1;
   clearHeroBoundaryLock();
-  return startHeroScrubToFrame(heroInputFrame, inputAt);
+  armHeroIdleStop();
+  if (direction > 0) {
+    if (heroMotionMode !== 'forward' || heroVideo.paused) return startHeroForward();
+    return true;
+  }
+  if (heroMotionMode !== 'reverse') return startHeroReverse();
+  return true;
 }
-function installHeroSeekCoalescer(video, variant) {
+function installHeroFrameTracker(video, variant) {
   cancelHeroFrameRunner();
-  heroSeekCoalescer = HeroCore.createSeekCoalescer(video, {
-    fps: variant.fps,
-    frameCount: variant.frameCount,
-    seekBoundaryGuardSeconds: HERO_SEEK_BOUNDARY_GUARD_SECONDS,
-    onSeekStart(frame) {
-      if (video !== heroVideo || variant !== activeVariant) return;
-      lastRequestedFrame = frame;
-    },
-    onSettled(frame) {
-      if (video !== heroVideo || variant !== activeVariant) return;
-      // A seek requested just before a rapid new gesture can settle late.
-      // Never expose that stale frame; the coalescer will continue toward its
-      // newest desired frame, while the visitor sees monotonic motion.
-      if (heroPendingDirection > 0 && presentedFrame >= 0 && frame < presentedFrame) return;
-      if (heroPendingDirection < 0 && presentedFrame >= 0 && frame > presentedFrame) return;
-      if (frameCommitRaf) cancelAnimationFrame(frameCommitRaf);
-      frameCommitRaf = requestAnimationFrame(() => {
-        frameCommitRaf = 0;
-        if (video !== heroVideo || variant !== activeVariant) return;
-        if (heroPendingDirection > 0 && presentedFrame >= 0 && frame < presentedFrame) return;
-        if (heroPendingDirection < 0 && presentedFrame >= 0 && frame > presentedFrame) return;
-        paintHeroFrame(video, variant, frame);
-        commitPresentedHeroFrame(frame);
-        settleHeroBoundary(frame);
-        if (!heroMotionActive && frame === targetFrame) heroPendingDirection = 0;
-      });
+  const commitMediaTime = (now, mediaTime) => {
+    if (video !== heroVideo || variant !== activeVariant) return;
+    const frame = heroFrameForMediaTime(mediaTime);
+    targetFrame = frame;
+    heroInputFrame = frame;
+    lastRequestedFrame = frame;
+    rememberLiveHeroFrame(frame, now, mediaTime);
+    commitPresentedHeroFrame(frame);
+    const lastFrame = variant.frameCount - 1;
+    if (heroMotionActive && heroMotionDirection > 0 && frame >= lastFrame) {
+      stopHeroMotion({ reason: 'end-boundary' });
+    } else if (heroMotionActive && heroMotionDirection < 0 && frame <= 0) {
+      stopHeroMotion({ reason: 'start-boundary' });
     }
-  });
-}
+  };
 
-function requestHeroFrame(frame) {
-  if (!activeVariant) return;
-  const requestedFrame = Math.max(0, Math.min(activeVariant.frameCount - 1, Math.round(frame)));
-  if (!heroMotionActive) targetFrame = requestedFrame;
-  lastRequestedFrame = requestedFrame;
-
-  if (!heroSeekCoalescer) {
-    applyHeroFrame(requestedFrame);
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    const collect = (now, metadata) => {
+      if (video !== heroVideo || variant !== activeVariant) return;
+      commitMediaTime(now, metadata.mediaTime);
+      heroVideoFrameCallbackId = video.requestVideoFrameCallback(collect);
+    };
+    heroVideoFrameCallbackId = video.requestVideoFrameCallback(collect);
     return;
   }
-  heroSeekCoalescer.setFrame(requestedFrame);
+
+  heroTimeUpdateVideo = video;
+  heroTimeUpdateHandler = () => commitMediaTime(performance.now(), video.currentTime);
+  video.addEventListener('timeupdate', heroTimeUpdateHandler);
+  video.addEventListener('seeked', heroTimeUpdateHandler);
 }
 
 function renderHeroPresentation(progress) {
@@ -606,8 +580,23 @@ function renderHero(progress) {
 
   if (heroVideo && activeVariant) {
     const frame = HeroCore.progressToFrame(p, activeVariant.frameCount);
-    if (!heroDriveActive) heroInputFrame = frame;
-    if (frame !== targetFrame) requestHeroFrame(frame);
+    heroInputFrame = frame;
+    targetFrame = frame;
+    lastRequestedFrame = frame;
+    if (!heroDriveActive) {
+      heroVideo.pause();
+      showHeroVideo();
+      const targetTime = HeroCore.frameToTime(frame, activeVariant.fps, activeVariant.frameCount);
+      if (Math.abs((Number(heroVideo.currentTime) || 0) - targetTime) > 0.4 / activeVariant.fps) {
+        try {
+          heroVideo.currentTime = frame <= 0
+            ? 0
+            : Math.max(0, targetTime - HERO_SEEK_BOUNDARY_GUARD_SECONDS);
+        } catch (error) {
+          console.warn('Hero scroll-position seek failed:', error);
+        }
+      }
+    }
   }
 }
 
@@ -673,7 +662,7 @@ function normalizeHeroWheelPixels(event) {
   let effectivePixels;
   let kind;
   if (pageInput) {
-    effectivePixels = heroWheelPixelsPerStory;
+    effectivePixels = Math.max(HERO_DISCRETE_WHEEL_PIXELS, window.innerHeight);
     kind = 'page';
   } else if (looksDiscrete) {
     const notchCount = legacyNotches >= 0.75
@@ -682,7 +671,7 @@ function normalizeHeroWheelPixels(event) {
     effectivePixels = HERO_DISCRETE_WHEEL_PIXELS * notchCount;
     kind = 'wheel-notch';
   } else {
-    effectivePixels = rawPixels * HERO_TRACKPAD_GAIN;
+    effectivePixels = rawPixels;
     kind = 'trackpad';
   }
 
@@ -693,7 +682,8 @@ function normalizeHeroWheelPixels(event) {
     rawPixels,
     effectivePixels: direction * effectivePixels,
     kind,
-    stepsPerStory: HERO_WHEEL_STEPS_PER_STORY
+    playbackRate: 1,
+    idleMs: HERO_INPUT_IDLE_MS
   };
   return direction * effectivePixels;
 }
@@ -776,7 +766,7 @@ function driveHeroWhileInputIsActive(pixelDelta, event) {
     // swallowed. Only a genuinely new gesture after an idle gap may leave the
     // hero, so the section never auto-exits while the wheel is still spinning.
     if (heroBoundaryDirection === direction &&
-        inputAt - heroBoundaryLastInputAt <= HERO_GESTURE_GAP_MS) {
+        inputAt - heroBoundaryLastInputAt <= HERO_INPUT_IDLE_MS) {
       preventHeroInput(event);
       heroBoundaryLastInputAt = inputAt;
       return true;
@@ -789,43 +779,12 @@ function driveHeroWhileInputIsActive(pixelDelta, event) {
 
   activateHeroDrive();
   preventHeroInput(event);
-  const gestureSteps = Math.max(1, Math.round(Math.abs(pixels) / HERO_DISCRETE_WHEEL_PIXELS));
-  startOrExtendHeroMotion(direction, inputAt, gestureSteps);
+  startOrExtendHeroMotion(direction, inputAt);
   return true;
 }
 
 function driveHeroByPixels(pixelDelta, event) {
-  if (!heroReady || !activeVariant || document.body.classList.contains('is-loading')) return false;
-  const pixels = Math.max(-360, Math.min(360, Number(pixelDelta) || 0));
-  const direction = Math.sign(pixels);
-  if (!direction) return false;
-
-  const lastFrame = activeVariant.frameCount - 1;
-
-  if (!shouldCaptureHeroDirection(direction)) {
-    if (heroDriveActive) {
-      if (event) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      }
-      releaseHeroDriveAndScroll(pixels);
-      return true;
-    }
-    return false;
-  }
-
-  activateHeroDrive();
-  if (event) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }
-
-  stopHeroMotion({ clearBoundary: true, resetGesture: true });
-
-  const frameDelta = pixels / heroWheelPixelsPerStory * lastFrame;
-  heroInputFrame = Math.max(0, Math.min(lastFrame, heroInputFrame + frameDelta));
-  requestHeroFrame(Math.round(heroInputFrame));
-  return true;
+  return driveHeroWhileInputIsActive(pixelDelta, event);
 }
 
 function handleHeroWheel(event) {
@@ -874,12 +833,20 @@ function heroDebugState() {
     active: heroDriveActive,
     motionActive: heroMotionActive,
     motionDirection: heroMotionDirection,
-    gestureGapMs: HERO_GESTURE_GAP_MS,
-    scrubMs: HERO_SCRUB_MS,
+    motionMode: heroMotionMode,
+    idleMs: HERO_INPUT_IDLE_MS,
     inputSerial: heroMotionInputSerial,
-    decoderMode: 'paused-single-flight-seek',
+    decoderMode: 'visible-native-1x-forward-gop2-reverse',
     videoPaused: heroVideo && heroVideo.paused,
     videoTime: heroVideo && heroVideo.currentTime,
+    playbackRate: heroVideo && heroVideo.playbackRate,
+    videoSeeking: heroVideo && heroVideo.seeking,
+    lastInputAt: heroMotionLastInputAt,
+    motionStartedAt: heroMotionStartedAt,
+    motionStoppedAt: heroMotionStoppedAt,
+    activeMotionMs: heroMotionActiveMs + (heroMotionActive
+      ? Math.max(0, performance.now() - heroMotionStartedAt)
+      : 0),
     targetFrame,
     presentedFrame,
     canvasPresentedFrame,
@@ -890,7 +857,6 @@ function heroDebugState() {
     heroStart: heroGeometry && heroGeometry.start,
     heroEnd: heroGeometry && heroGeometry.end,
     frameCount: activeVariant && activeVariant.frameCount,
-    wheelStepsPerStory: HERO_WHEEL_STEPS_PER_STORY,
     boundaryDirection: heroBoundaryDirection,
     lastWheel: lastHeroWheelDiagnostics
   };
@@ -965,10 +931,14 @@ async function installVariant(key, options = {}) {
     targetFrame = installationFrame;
     heroInputFrame = installationFrame;
 
-    candidate.classList.remove('is-scrub-visible');
-    heroCanvas.classList.remove('is-scrub-hidden');
-    paintHeroFrame(heroVideo, activeVariant, installationFrame);
-    installHeroSeekCoalescer(heroVideo, activeVariant);
+    candidate.playbackRate = 1;
+    candidate.classList.add('is-ready', 'is-scrub-visible');
+    heroCanvas.classList.remove('is-ready');
+    heroCanvas.classList.add('is-scrub-hidden');
+    if (heroCanvas.width !== variant.width) heroCanvas.width = variant.width;
+    if (heroCanvas.height !== variant.height) heroCanvas.height = variant.height;
+    installHeroFrameTracker(heroVideo, activeVariant);
+    candidate.onended = () => stopHeroMotion({ reason: 'ended' });
 
     if (!initial) {
       previousVideo.remove();
