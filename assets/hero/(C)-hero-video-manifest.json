@@ -12,7 +12,7 @@
     "renderMode": "visible-native-video",
     "interaction": "wheel-active-natural-speed-1x",
     "playbackRate": 1,
-    "idleStopMs": 80
+    "idleStopMs": 160
   },
   "mobile": {
     "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=natural-speed-wheel-v20-645a4cd8",
@@ -26,7 +26,7 @@
     "cropTracking": "car-and-garage-dynamic",
     "interaction": "wheel-active-natural-speed-1x",
     "playbackRate": 1,
-    "idleStopMs": 80
+    "idleStopMs": 160
   },
   "beats": [
     [

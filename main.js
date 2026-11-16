@@ -145,10 +145,12 @@ let heroWheelPacketLastAt = -Infinity;
 let heroWheelPacketDirection = 0;
 let heroBoundaryDirection = 0;
 let heroBoundaryLastInputAt = 0;
-// Wheel packets are considered active until 80 ms after their latest event.
+// Wheel packets are considered active until 160 ms after their latest event.
+// The larger gate absorbs real mouse/remote event-delivery gaps without
+// changing the media rate; it is still a short stop, not autoplay momentum.
 // During that window the master advances at exactly one source second per
 // wall-clock second. No wheel input means no media motion.
-const HERO_INPUT_IDLE_MS = 80;
+const HERO_INPUT_IDLE_MS = 160;
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
 let lastHeroWheelDiagnostics = null;
 
