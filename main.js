@@ -78,10 +78,9 @@ const Sound = {
 $('#soundBtn').addEventListener('click', () => Sound.set(!Sound.on));
 
 /* ===================================================== HERO VIDEO
-   One fully preloaded, short-GOP MP4 is controlled by the visible scroll
-   position. The short hero travel makes one wheel notch meaningful. The next
-   adjacent source frame is requested only after the browser presents the last
-   one, so forward and reverse motion stay continuous without distant seeks. */
+   One fully preloaded, short-GOP MP4 is mechanically scrubbed by raw input.
+   Each wheel/touch gesture selects the latest frame directly; when input stops,
+   the paused decoder and visible canvas remain still with no chase animation. */
 const HeroCore = window.ENYHeroCore;
 // Seeking exactly onto a media timestamp can make Chromium resolve to the next
 // decoded frame. A 1 ms pre-boundary guard keeps every requested frame exact.
@@ -110,10 +109,8 @@ let variantAbort = null;
 let variantSerial = 0;
 let renderRaf = 0;
 let measureRaf = 0;
-let frameSeekedVideo = null;
-let frameSeekedHandler = null;
-let frameFallbackTimer = 0;
 let frameCommitRaf = 0;
+let heroSeekCoalescer = null;
 let currentProgress = 0;
 let lastProgress = 0;
 let lastRequestedFrame = -1;
@@ -129,8 +126,6 @@ let heroDriveActive = false;
 let heroInputFrame = 0;
 let heroExpectedScrollY = null;
 let heroExpectedScrollRaf = 0;
-let pendingHeroExitPixels = 0;
-let pendingHeroExitRaf = 0;
 let heroTouchY = null;
 // WheelEvent.deltaY is not a physical notch. Depending on the mouse/driver,
 // one notch can arrive as 40, 53, 100 or 120 pixels (or 3 lines). Mapping
@@ -138,11 +133,11 @@ let heroTouchY = null;
 // roughly 30 turns. Discrete wheel input is now hardware-normalized while
 // small high-resolution trackpad deltas remain continuous.
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
-// Two normalized wheel notches drive the complete hero. The next gesture,
-// after the final frame is actually visible, releases the page into section 2.
-const HERO_WHEEL_STEPS_PER_STORY = 2;
-// Three tiny remote/trackpad impulses of deltaY=8 also complete the story.
-const HERO_TRACKPAD_GAIN = 10;
+// Three deliberate gestures cover the story. Each input directly selects one
+// scrub position; nothing keeps playing after the input has settled.
+const HERO_WHEEL_STEPS_PER_STORY = 3;
+// Three tiny remote/trackpad impulses of deltaY=8 cover the same 360 px story.
+const HERO_TRACKPAD_GAIN = 15;
 const heroWheelPixelsPerStory = HERO_DISCRETE_WHEEL_PIXELS * HERO_WHEEL_STEPS_PER_STORY;
 let lastHeroWheelDiagnostics = null;
 
@@ -347,27 +342,10 @@ function paintHeroFrame(video, variant, frame) {
   return true;
 }
 
-function initializeRequestedFrame() {
-  if (lastRequestedFrame < 0) {
-    const initialFrame = Math.max(0, Math.min(
-      activeVariant.frameCount - 1,
-      Math.round((Number(heroVideo.currentTime) || 0) * activeVariant.fps)
-    ));
-    lastRequestedFrame = initialFrame;
-    presentedFrame = initialFrame;
-    heroInputFrame = initialFrame;
-  }
-}
-
 function cancelHeroFrameRunner() {
-  if (frameSeekedVideo && frameSeekedHandler) {
-    frameSeekedVideo.removeEventListener('seeked', frameSeekedHandler);
-  }
-  if (frameFallbackTimer) clearTimeout(frameFallbackTimer);
+  if (heroSeekCoalescer) heroSeekCoalescer.destroy();
   if (frameCommitRaf) cancelAnimationFrame(frameCommitRaf);
-  frameSeekedVideo = null;
-  frameSeekedHandler = null;
-  frameFallbackTimer = 0;
+  heroSeekCoalescer = null;
   frameCommitRaf = 0;
 }
 
@@ -396,79 +374,41 @@ function commitPresentedHeroFrame(frame) {
   if (!heroDriveActive) return;
   renderHeroPresentation(heroProgressForFrame(presentedFrame));
   syncHeroScrollToPresentedFrame();
-
-  const lastFrame = activeVariant.frameCount - 1;
-  if (pendingHeroExitPixels > 0 && presentedFrame === lastFrame && !pendingHeroExitRaf) {
-    // A third gesture may arrive while the exact-frame runner is still catching
-    // up. Wait one more paint so the clean final frame is genuinely visible,
-    // then honor that already-issued gesture and enter section 2.
-    pendingHeroExitRaf = requestAnimationFrame(() => {
-      pendingHeroExitRaf = 0;
-      if (!activeVariant || presentedFrame !== activeVariant.frameCount - 1 || pendingHeroExitPixels <= 0) return;
-      const exitPixels = pendingHeroExitPixels;
-      pendingHeroExitPixels = 0;
-      releaseHeroDriveAndScroll(exitPixels);
-    });
-  }
 }
 
-function presentNextHeroFrame() {
-  if (!heroVideo || !activeVariant || targetFrame < 0) return;
-  initializeRequestedFrame();
-
-  const delta = targetFrame - lastRequestedFrame;
-  if (!delta) return;
-
-  const video = heroVideo;
-  const nextFrame = lastRequestedFrame + Math.sign(delta);
-
-  // `seeked` belongs to this exact currentTime assignment, unlike a
-  // requestVideoFrameCallback that can already be queued for the old frame.
-  // Commit on the next paint so scroll position never gets ahead of the
-  // decoded adjacent frame, in either direction.
-  let settled = false;
-  const finishFrame = () => {
-    if (settled || frameSeekedVideo !== video) return;
-    settled = true;
-    video.removeEventListener('seeked', finishFrame);
-    if (frameFallbackTimer) clearTimeout(frameFallbackTimer);
-    frameSeekedVideo = null;
-    frameSeekedHandler = null;
-    frameFallbackTimer = 0;
-    frameCommitRaf = requestAnimationFrame(() => {
-      frameCommitRaf = 0;
-      paintHeroFrame(video, activeVariant, nextFrame);
-      commitPresentedHeroFrame(nextFrame);
-      // drawImage() has synchronously copied the decoded pixels into the visible
-      // canvas. Start the next seek immediately; its next draw is still RAF-gated.
-      // This preserves the ordered +/-1 frame history without adding a second
-      // full display frame of latency for every source frame.
-      presentNextHeroFrame();
-    });
-  };
-
-  frameSeekedVideo = video;
-  frameSeekedHandler = finishFrame;
-  video.addEventListener('seeked', finishFrame, { once: true });
-  frameFallbackTimer = setTimeout(finishFrame, 250);
-  applyHeroFrame(nextFrame);
+function installHeroSeekCoalescer(video, variant) {
+  cancelHeroFrameRunner();
+  heroSeekCoalescer = HeroCore.createSeekCoalescer(video, {
+    fps: variant.fps,
+    frameCount: variant.frameCount,
+    seekBoundaryGuardSeconds: HERO_SEEK_BOUNDARY_GUARD_SECONDS,
+    onSeekStart(frame) {
+      if (video !== heroVideo || variant !== activeVariant) return;
+      lastRequestedFrame = frame;
+    },
+    onSettled(frame) {
+      if (video !== heroVideo || variant !== activeVariant) return;
+      if (frameCommitRaf) cancelAnimationFrame(frameCommitRaf);
+      frameCommitRaf = requestAnimationFrame(() => {
+        frameCommitRaf = 0;
+        if (video !== heroVideo || variant !== activeVariant) return;
+        paintHeroFrame(video, variant, frame);
+        commitPresentedHeroFrame(frame);
+      });
+    }
+  });
 }
 
 function requestHeroFrame(frame) {
   if (!activeVariant) return;
   targetFrame = Math.max(0, Math.min(activeVariant.frameCount - 1, Math.round(frame)));
+  lastRequestedFrame = targetFrame;
 
-  if (!heroReady || matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    cancelHeroFrameRunner();
+  if (!heroSeekCoalescer) {
     applyHeroFrame(targetFrame);
-    commitPresentedHeroFrame(targetFrame);
     return;
   }
-
-  if (!frameSeekedHandler && !frameFallbackTimer && !frameCommitRaf &&
-      lastRequestedFrame !== targetFrame) {
-    presentNextHeroFrame();
-  }
+  heroSeekCoalescer.setFrame(targetFrame);
 }
 
 function renderHeroPresentation(progress) {
@@ -606,16 +546,7 @@ function activateHeroDrive() {
   syncHeroScrollToPresentedFrame();
 }
 
-function cancelPendingHeroExit() {
-  pendingHeroExitPixels = 0;
-  if (pendingHeroExitRaf) {
-    cancelAnimationFrame(pendingHeroExitRaf);
-    pendingHeroExitRaf = 0;
-  }
-}
-
 function releaseHeroDrive() {
-  cancelPendingHeroExit();
   if (!heroDriveActive) return;
   heroDriveActive = false;
   heroExpectedScrollY = null;
@@ -654,23 +585,6 @@ function driveHeroByPixels(pixelDelta, event) {
   if (!direction) return false;
 
   const lastFrame = activeVariant.frameCount - 1;
-  const desired = targetFrame >= 0 ? targetFrame : HeroCore.progressToFrame(currentProgress, activeVariant.frameCount);
-  const shown = presentedFrame >= 0 ? presentedFrame : desired;
-
-  if (direction < 0) cancelPendingHeroExit();
-
-  // The first two notches target the full story. If a third downward gesture
-  // arrives before the ordered frame runner reaches the end, remember it and
-  // release only after the final clean frame has had a real paint opportunity.
-  if (direction > 0 && desired >= lastFrame && shown < lastFrame) {
-    activateHeroDrive();
-    if (event) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-    pendingHeroExitPixels = Math.max(pendingHeroExitPixels, Math.abs(pixels));
-    return true;
-  }
 
   if (!shouldCaptureHeroDirection(direction)) {
     if (heroDriveActive) {
@@ -751,7 +665,6 @@ function heroDebugState() {
     heroEnd: heroGeometry && heroGeometry.end,
     frameCount: activeVariant && activeVariant.frameCount,
     wheelStepsPerStory: HERO_WHEEL_STEPS_PER_STORY,
-    pendingExitPixels: pendingHeroExitPixels,
     lastWheel: lastHeroWheelDiagnostics
   };
 }
@@ -818,12 +731,14 @@ async function installVariant(key, options = {}) {
     objectUrl = null;
     activeVariant = variant;
     activeVariantKey = key;
-    lastRequestedFrame = -1;
-    presentedFrame = -1;
+    lastRequestedFrame = installationFrame;
+    presentedFrame = installationFrame;
     canvasPresentedFrame = -1;
-    targetFrame = -1;
+    targetFrame = installationFrame;
+    heroInputFrame = installationFrame;
 
     paintHeroFrame(heroVideo, activeVariant, installationFrame);
+    installHeroSeekCoalescer(heroVideo, activeVariant);
 
     if (!initial) {
       previousVideo.remove();
