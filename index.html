@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ENY Motors · 100% Hand Car Wash · Brooklyn</title>
+<meta name="description" content="East New York Motors. 100% hand car wash, luxury detailing, window tint, wraps and paint protection in Brooklyn, NY.">
+<meta name="theme-color" content="#050607">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23050607'/%3E%3Cpath d='M17 14h34l-3 9H28l-2 7h18l-3 9H23l-3 9h21l-3 9H6z' fill='%235ef2d3'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/vendor/lenis/lenis-1.3.27.css">
+<link rel="stylesheet" href="styles.css?v=faster-smooth-v7">
+</head>
+<body class="is-loading">
+
+<!-- ============ START SCREEN (game style) ============ -->
+<div id="start" class="start" aria-live="polite">
+  <div class="start__inner">
+    <div class="logo logo--big"><span class="logo__eny">ENY</span><span class="logo__motors">MOTORS</span></div>
+    <div class="start__sub">Custom Auto Detailing · Brooklyn, NY</div>
+    <div class="start__bar"><i id="startBar"></i></div>
+    <div class="start__btns">
+      <button id="startSound" class="btn btn--mint" disabled>Enter with sound</button>
+      <button id="startMute" class="btn btn--ghost" disabled>Silent</button>
+    </div>
+    <div class="start__hint">Scroll to drive</div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<header class="hud">
+  <a href="#top" class="logo logo--hud" aria-label="ENY Motors"><span class="logo__eny">ENY</span><span class="logo__motors">MOTORS</span></a>
+  <nav class="hud__nav">
+    <a href="#select">Wash</a>
+    <a href="#wipe">Wipe</a>
+    <a href="#lot">The Lot</a>
+    <a href="#more">Upgrades</a>
+    <a href="#visit">Visit</a>
+  </nav>
+  <button id="soundBtn" class="hud__sound" aria-pressed="false" title="Sound"><span></span><span></span><span></span><span></span></button>
+</header>
+
+<main id="top">
+
+<!-- ============ HERO: scroll-driven garage ============ -->
+<section id="hero" class="hero">
+  <div class="hero__sticky">
+    <picture id="heroPoster" class="hero__poster" aria-hidden="true">
+      <source media="(max-width: 760px)" srcset="assets/hero/(C)-hero-v1-mobile-start.png?v=old-angle-kling-2026-11-15-b2b033c7-c5703535">
+      <img src="assets/hero/(C)-hero-v1-desktop-start.png?v=old-angle-kling-2026-11-15-b2b033c7-fdce2750" width="1920" height="1080" alt="">
+    </picture>
+    <video id="heroVideo" class="hero__video" muted playsinline preload="none" disablepictureinpicture tabindex="-1" aria-label="A dirty Rolls-Royce Cullinan enters the ENY Motors hand wash and exits clean"></video>
+    <canvas id="heroCanvas" class="hero__canvas" width="1920" height="1080" aria-hidden="true"></canvas>
+    <div class="hero__vignette"></div>
+    <div class="hero__grain"></div>
+
+    <div class="beat beat--top" data-in="0" data-out="0.07">
+      <div class="logo logo--hero"><span class="logo__eny">ENY</span><span class="logo__motors">MOTORS</span></div>
+      <p class="beat__kicker">East New York · 100% Hand Car Wash</p>
+    </div>
+    <div class="beat beat--low" data-in="0.24" data-out="0.36"><h2 class="beat__big">Pull in<span class="mint">.</span></h2></div>
+    <div class="beat" data-in="0.45" data-out="0.6"><h2 class="beat__big">Hands only<span class="mint">.</span></h2><p class="beat__kicker">No brushes. No machines.</p></div>
+    <div class="beat beat--end beat--top" data-in="0.9" data-out="1.01">
+      <h2 class="beat__big">Dirty in.<br><span class="mint">Flawless out.</span></h2>
+      <div class="beat__btns">
+        <a href="#select" class="btn btn--mint">Choose your wash</a>
+        <a href="#visit" class="btn btn--ghost">Find us</a>
+      </div>
+    </div>
+
+    <div class="hero__progress"><i id="heroProgress"></i></div>
+    <div class="hero__scrollcue" id="scrollCue"><span>Scroll</span><i></i></div>
+  </div>
+</section>
+
+<!-- ============ SELECT YOUR WASH ============ -->
+<section id="select" class="select">
+  <div class="sec-tag">01 · Select your wash</div>
+  <div class="select__wrap">
+    <div class="select__list" role="tablist" id="pkgList"></div>
+    <div class="select__stage">
+      <div class="select__media"><img id="pkgImg" alt=""><div class="select__shine"></div></div>
+      <div class="select__card">
+        <div class="select__tier" id="pkgTier"></div>
+        <h3 class="select__name" id="pkgName"></h3>
+        <div class="select__price"><span>$</span><b id="pkgPrice">0</b></div>
+        <ul class="select__chips" id="pkgChips"></ul>
+        <div class="select__note" id="pkgNote"></div>
+        <a href="#visit" class="btn btn--mint">Book this wash</a>
+      </div>
+    </div>
+  </div>
+  <div class="select__keys"><kbd>←</kbd><kbd>→</kbd> switch · Cars &amp; SUVs same price</div>
+</section>
+
+<!-- ============ WIPE IT CLEAN (mini game) ============ -->
+<section id="wipe" class="wipe">
+  <div class="sec-tag">02 · Your turn</div>
+  <h2 class="wipe__title">Wipe it clean<span class="mint">.</span></h2>
+  <div class="wipe__box" id="wipeBox">
+    <img src="assets/photos/18-bentley-front-inside.jpg" alt="Black Bentley Continental after an ENY hand wash" class="wipe__img">
+    <canvas id="wipeCanvas" class="wipe__dirt"></canvas>
+    <div class="wipe__meter"><i id="wipeMeter"></i><span id="wipePct">0%</span></div>
+    <div class="wipe__done" id="wipeDone">
+      <b>That's the ENY shine.</b>
+      <a href="#select" class="btn btn--mint">Get it for real</a>
+      <button class="btn btn--ghost" id="wipeAgain">Dirty it again</button>
+    </div>
+    <div class="wipe__hint" id="wipeHint">Drag across the car</div>
+  </div>
+</section>
+
+<!-- ============ SELF-SERVICE ============ -->
+<section id="self" class="self">
+  <video class="self__bg" src="assets/clips/pressure-spray.mp4" poster="assets/clips/pressure-spray.jpg" muted loop playsinline autoplay></video>
+  <div class="self__inner">
+    <div class="sec-tag">03 · Self-service bay</div>
+    <h2 class="self__title">You control the time.</h2>
+    <div class="self__meter">
+      <div class="self__readout"><span class="self__min"><b id="selfMin">10</b> min</span><span class="self__eq">=</span><span class="self__usd">$<b id="selfUsd">10</b></span></div>
+      <input type="range" id="selfRange" min="1" max="60" value="10" aria-label="Minutes">
+      <div class="self__scale"><span>1</span><span>$1 per minute</span><span>60</span></div>
+    </div>
+    <p class="self__inc">Indoor bay · Soap · Brushes · Towels · Spray wax · Vacuum. All included.</p>
+  </div>
+</section>
+
+<!-- ============ THE LOT (horizontal) ============ -->
+<section id="lot" class="lot">
+  <div class="lot__sticky">
+    <div class="sec-tag sec-tag--abs">04 · Recently on the lot</div>
+    <div class="lot__track" id="lotTrack"></div>
+  </div>
+</section>
+
+<!-- ============ UPGRADES ============ -->
+<section id="more" class="more">
+  <div class="sec-tag">05 · Beyond the wash</div>
+  <h2 class="more__title">Make it yours<span class="mint">.</span></h2>
+  <div class="more__grid" id="moreGrid"></div>
+</section>
+
+<!-- ============ VISIT ============ -->
+<section id="visit" class="visit">
+  <video class="visit__bg" src="assets/clips/pull-out.mp4" poster="assets/clips/pull-out.jpg" muted loop playsinline autoplay></video>
+  <div class="visit__inner">
+    <div class="sec-tag">06 · Pull up</div>
+    <h2 class="visit__title">Your car's<br>next stop<span class="mint">.</span></h2>
+    <!-- [Platzhalter] Adresse, Telefon und Öffnungszeiten von ENY Motors bestätigen -->
+    <p class="visit__addr">Fulton St &amp; Essex St · East New York, Brooklyn</p>
+    <div class="beat__btns">
+      <a class="btn btn--mint" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=Fulton+St+%26+Essex+St+Brooklyn+NY">Directions</a>
+      <a class="btn btn--ghost" target="_blank" rel="noopener" href="https://www.instagram.com/enymotors">@enymotors</a>
+    </div>
+    <p class="visit__pay">Flexible payment: lease-to-own, no credit needed (Koalafi).</p>
+  </div>
+  <footer class="foot">
+    <div class="logo"><span class="logo__eny">ENY</span><span class="logo__motors">MOTORS</span></div>
+    <span>© East New York Motors</span>
+  </footer>
+</section>
+
+</main>
+
+<script src="(C)-hero-scroll-core.js?v=frame-boundary-v9"></script>
+<script src="assets/vendor/lenis/lenis-1.3.27.min.js"></script>
+<script src="main.js?v=hardware-wheel-normalization-v12"></script>
+</body>
+</html>
