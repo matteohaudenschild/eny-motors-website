@@ -65,7 +65,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .hero__poster img{width:100%;height:100%;object-fit:cover;object-position:center}
 .hero__video{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
 .hero__video.is-scrub-visible{opacity:1}
-.hero__canvas{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:opacity .16s linear}
+.hero__canvas{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
 .hero__canvas.is-ready{opacity:1}
 .hero__canvas.is-scrub-hidden{opacity:0!important;transition:none}
 .hero__vignette{position:absolute;z-index:2;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 55%,transparent 58%,rgba(0,0,0,.38) 100%),linear-gradient(transparent 88%,rgba(5,6,7,.42))}

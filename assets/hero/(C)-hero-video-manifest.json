@@ -1,26 +1,28 @@
 {
-  "version": 11,
+  "version": 12,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
-    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=paused-gop2-three-roll-v19-2cd0d503",
     "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
     "width": 1920,
     "height": 1080,
     "fps": 24,
     "frameCount": 281,
-    "scrubEncoding": "short-gop-6-adjacent",
-    "renderMode": "canvas-frame-lock"
+    "scrubEncoding": "short-gop-2-crf20",
+    "renderMode": "paused-single-flight-canvas",
+    "interaction": "three-gesture-240ms-scrub"
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=paused-gop2-three-roll-v19-645a4cd8",
     "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
     "width": 1080,
     "height": 1920,
     "fps": 24,
     "frameCount": 281,
-    "scrubEncoding": "short-gop-6-adjacent",
-    "renderMode": "canvas-frame-lock",
-    "cropTracking": "car-and-garage-dynamic"
+    "scrubEncoding": "short-gop-2-crf20",
+    "renderMode": "paused-single-flight-canvas",
+    "cropTracking": "car-and-garage-dynamic",
+    "interaction": "three-gesture-240ms-scrub"
   },
   "beats": [
     [
