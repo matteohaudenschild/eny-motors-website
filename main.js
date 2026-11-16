@@ -1,8 +1,9 @@
 /* ENY Motors – main.js
-   Hero: the fully preloaded HD master remains the visible layer and runs at
-   its real 1× speed only while wheel/touch/key input stays active. It pauses
-   in place after roughly 80–100 ms of inactivity, with no catch-up or layer
-   handoff. Desktop and mobile use separate manifest compositions.
+   Hero v21: the fully preloaded HD master remains the visible layer. Every
+   normalized wheel notch queues exactly one quarter of the manifest frame
+   range; the native video then runs continuously at 1× until that target and
+   pauses. Additional input extends the queued target without restarting the
+   video. Desktop and mobile use separate manifest timing/compositions.
 */
 (() => {
 'use strict';
@@ -81,7 +82,8 @@ $('#soundBtn').addEventListener('click', () => Sound.set(!Sound.on));
 
 /* ===================================================== HERO VIDEO
    Forward motion is the visible native video at playbackRate 1. Reverse uses
-   wall-clock currentTime steps on the GOP-2 master. Both stop on wheel idle. */
+   a wall-clock 1× currentTime runner on the GOP-2 master. Both stop only when
+   the queued frame target is presented; there is no input-idle pulse. */
 const HeroCore = window.ENYHeroCore;
 // Seeking exactly onto a media timestamp can make Chromium resolve to the next
 // decoded frame. A 1 ms pre-boundary guard keeps every requested frame exact.
@@ -135,7 +137,6 @@ let heroMotionStartedAt = 0;
 let heroMotionStoppedAt = 0;
 let heroMotionActiveMs = 0;
 let heroMotionInputSerial = 0;
-let heroIdleTimer = 0;
 let heroReverseOriginAt = 0;
 let heroReverseOriginTime = 0;
 let heroVideoFrameCallbackId = 0;
@@ -145,13 +146,14 @@ let heroWheelPacketLastAt = -Infinity;
 let heroWheelPacketDirection = 0;
 let heroBoundaryDirection = 0;
 let heroBoundaryLastInputAt = 0;
-// Wheel packets are considered active until 160 ms after their latest event.
-// The larger gate absorbs real mouse/remote event-delivery gaps without
-// changing the media rate; it is still a short stop, not autoplay momentum.
-// During that window the master advances at exactly one source second per
-// wall-clock second. No wheel input means no media motion.
-const HERO_INPUT_IDLE_MS = 160;
+let heroQueuedTargetExact = 0;
+// One normalized discrete wheel notch advances one of four equal story
+// segments. 40/53/100/120 px hardware deltas are all promoted to 120 px.
+// A separate boundary gate only prevents the tail of the roll that reached an
+// endpoint from immediately throwing the page out of the sticky hero.
+const HERO_WHEEL_STEPS_PER_STORY = 4;
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
+const HERO_BOUNDARY_EXIT_GAP_MS = 180;
 let lastHeroWheelDiagnostics = null;
 
 function abortError() {
@@ -397,6 +399,26 @@ function clearHeroBoundaryLock() {
   heroBoundaryLastInputAt = 0;
 }
 
+function heroLastFrame() {
+  return activeVariant ? activeVariant.frameCount - 1 : 0;
+}
+
+function heroStepFrames() {
+  return heroLastFrame() / HERO_WHEEL_STEPS_PER_STORY;
+}
+
+function clampHeroFrameExact(frame) {
+  return Math.max(0, Math.min(heroLastFrame(), Number(frame) || 0));
+}
+
+function setQueuedHeroTarget(frame) {
+  heroQueuedTargetExact = clampHeroFrameExact(frame);
+  targetFrame = Math.max(0, Math.min(heroLastFrame(), Math.round(heroQueuedTargetExact)));
+  heroInputFrame = targetFrame;
+  lastRequestedFrame = targetFrame;
+  return targetFrame;
+}
+
 function resetHeroGesturePacket() {
   heroWheelPacketLastAt = -Infinity;
   heroWheelPacketDirection = 0;
@@ -413,8 +435,6 @@ function settleHeroBoundary(frame) {
 
 function stopHeroMotion(options = {}) {
   const wasActive = heroMotionActive;
-  if (heroIdleTimer) clearTimeout(heroIdleTimer);
-  heroIdleTimer = 0;
   heroMotionActive = false;
   if (heroMotionRaf) cancelAnimationFrame(heroMotionRaf);
   heroMotionRaf = 0;
@@ -429,34 +449,46 @@ function stopHeroMotion(options = {}) {
   if (options.clearBoundary) clearHeroBoundaryLock();
   if (options.resetGesture) resetHeroGesturePacket();
   if (heroVideo && activeVariant) {
-    const frame = heroFrameForMediaTime(heroVideo.currentTime);
-    targetFrame = frame;
-    heroInputFrame = frame;
-    if (frame !== presentedFrame) {
-      rememberLiveHeroFrame(frame, heroMotionStoppedAt, heroVideo.currentTime);
-      commitPresentedHeroFrame(frame);
+    const mediaFrame = heroFrameForMediaTime(heroVideo.currentTime);
+    if (!options.preserveTarget) setQueuedHeroTarget(mediaFrame);
+    const settledFrame = options.preserveTarget ? targetFrame : mediaFrame;
+
+    if (options.snapToTarget && mediaFrame !== settledFrame) {
+      const targetTime = HeroCore.frameToTime(settledFrame, activeVariant.fps, activeVariant.frameCount);
+      try {
+        // Target completion uses the exact manifest timestamp. Unlike initial
+        // scroll-position preparation, this seek happens after the neighboring
+        // frame has already been decoded; subtracting the guard would visibly
+        // settle one frame early in reverse (for example 209 instead of 210).
+        heroVideo.currentTime = settledFrame <= 0 ? 0 : targetTime;
+      } catch (error) {
+        console.warn('Hero target snap failed:', error);
+      }
+    } else if (mediaFrame !== presentedFrame) {
+      rememberLiveHeroFrame(mediaFrame, heroMotionStoppedAt, heroVideo.currentTime);
+      commitPresentedHeroFrame(mediaFrame);
     }
-    settleHeroBoundary(frame);
+    settleHeroBoundary(settledFrame);
   }
   return wasActive;
 }
 
-function armHeroIdleStop() {
-  if (heroIdleTimer) clearTimeout(heroIdleTimer);
-  heroIdleTimer = setTimeout(() => stopHeroMotion({ reason: 'input-idle' }), HERO_INPUT_IDLE_MS);
+function finishHeroMotionAtTarget(reason) {
+  return stopHeroMotion({ reason, preserveTarget: true, snapToTarget: true });
 }
 
 function heroReverseLoop(now) {
   heroMotionRaf = 0;
   if (!heroMotionActive || heroMotionMode !== 'reverse' || !heroVideo || !activeVariant) return;
   const elapsed = Math.max(0, (now - heroReverseOriginAt) / 1000);
-  const targetTime = Math.max(0, heroReverseOriginTime - elapsed);
-  if (targetTime <= 0) {
-    heroVideo.currentTime = 0;
-    stopHeroMotion({ reason: 'start-boundary' });
+  const queuedTime = HeroCore.frameToTime(targetFrame, activeVariant.fps, activeVariant.frameCount);
+  const naturalTime = Math.max(0, heroReverseOriginTime - elapsed);
+  if (naturalTime <= queuedTime) {
+    heroVideo.currentTime = targetFrame <= 0 ? 0 : queuedTime;
+    finishHeroMotionAtTarget(targetFrame <= 0 ? 'start-boundary' : 'target-reached');
     return;
   }
-  heroVideo.currentTime = targetTime;
+  heroVideo.currentTime = naturalTime;
   heroMotionRaf = requestAnimationFrame(heroReverseLoop);
 }
 
@@ -465,9 +497,8 @@ function startHeroForward() {
   const wasActive = heroMotionActive;
   if (heroMotionRaf) cancelAnimationFrame(heroMotionRaf);
   heroMotionRaf = 0;
-  const lastFrame = activeVariant.frameCount - 1;
-  if (heroFrameForMediaTime(heroVideo.currentTime) >= lastFrame) {
-    stopHeroMotion({ reason: 'end-boundary' });
+  if (heroFrameForMediaTime(heroVideo.currentTime) >= targetFrame) {
+    finishHeroMotionAtTarget(targetFrame >= heroLastFrame() ? 'end-boundary' : 'target-reached');
     return false;
   }
   showHeroVideo();
@@ -491,8 +522,8 @@ function startHeroReverse() {
   if (!heroVideo || !activeVariant) return false;
   const wasActive = heroMotionActive;
   heroVideo.pause();
-  if (heroVideo.currentTime <= 0) {
-    stopHeroMotion({ reason: 'start-boundary' });
+  if (heroFrameForMediaTime(heroVideo.currentTime) <= targetFrame) {
+    finishHeroMotionAtTarget(targetFrame <= 0 ? 'start-boundary' : 'target-reached');
     return false;
   }
   showHeroVideo();
@@ -506,39 +537,46 @@ function startHeroReverse() {
   return true;
 }
 
-function startOrExtendHeroMotion(direction, inputAt = performance.now()) {
-  if (!activeVariant || !direction) return false;
-  const isNewGesture = direction !== heroWheelPacketDirection ||
-    inputAt - heroWheelPacketLastAt > HERO_INPUT_IDLE_MS;
-
+function startOrExtendHeroMotion(direction, frameDelta, inputAt = performance.now()) {
+  if (!activeVariant || !heroVideo || !direction || !frameDelta) return false;
+  const mediaFrameExact = clampHeroFrameExact((Number(heroVideo.currentTime) || 0) * activeVariant.fps);
+  const directionChanged = heroWheelPacketDirection && direction !== heroWheelPacketDirection;
+  const baseTarget = directionChanged ? mediaFrameExact : heroQueuedTargetExact;
+  const previousTarget = targetFrame;
+  const nextTarget = setQueuedHeroTarget(baseTarget + frameDelta);
   heroWheelPacketLastAt = inputAt;
   heroWheelPacketDirection = direction;
   heroMotionLastInputAt = inputAt;
-  if (isNewGesture) heroMotionInputSerial += 1;
+  if (nextTarget !== previousTarget || Math.abs(heroQueuedTargetExact - baseTarget) > 0.0001) {
+    heroMotionInputSerial += 1;
+  }
   clearHeroBoundaryLock();
-  armHeroIdleStop();
-  if (direction > 0) {
+
+  const currentFrame = heroFrameForMediaTime(heroVideo.currentTime);
+  if (targetFrame > currentFrame) {
     if (heroMotionMode !== 'forward' || heroVideo.paused) return startHeroForward();
     return true;
   }
-  if (heroMotionMode !== 'reverse') return startHeroReverse();
-  return true;
+  if (targetFrame < currentFrame) {
+    if (heroMotionMode !== 'reverse') return startHeroReverse();
+    return true;
+  }
+  finishHeroMotionAtTarget(targetFrame <= 0
+    ? 'start-boundary'
+    : (targetFrame >= heroLastFrame() ? 'end-boundary' : 'target-reached'));
+  return false;
 }
 function installHeroFrameTracker(video, variant) {
   cancelHeroFrameRunner();
   const commitMediaTime = (now, mediaTime) => {
     if (video !== heroVideo || variant !== activeVariant) return;
     const frame = heroFrameForMediaTime(mediaTime);
-    targetFrame = frame;
-    heroInputFrame = frame;
-    lastRequestedFrame = frame;
     rememberLiveHeroFrame(frame, now, mediaTime);
     commitPresentedHeroFrame(frame);
-    const lastFrame = variant.frameCount - 1;
-    if (heroMotionActive && heroMotionDirection > 0 && frame >= lastFrame) {
-      stopHeroMotion({ reason: 'end-boundary' });
-    } else if (heroMotionActive && heroMotionDirection < 0 && frame <= 0) {
-      stopHeroMotion({ reason: 'start-boundary' });
+    if (heroMotionActive && heroMotionDirection > 0 && frame >= targetFrame) {
+      finishHeroMotionAtTarget(targetFrame >= variant.frameCount - 1 ? 'end-boundary' : 'target-reached');
+    } else if (heroMotionActive && heroMotionDirection < 0 && frame <= targetFrame) {
+      finishHeroMotionAtTarget(targetFrame <= 0 ? 'start-boundary' : 'target-reached');
     }
   };
 
@@ -582,9 +620,7 @@ function renderHero(progress) {
 
   if (heroVideo && activeVariant) {
     const frame = HeroCore.progressToFrame(p, activeVariant.frameCount);
-    heroInputFrame = frame;
-    targetFrame = frame;
-    lastRequestedFrame = frame;
+    setQueuedHeroTarget(frame);
     if (!heroDriveActive) {
       heroVideo.pause();
       showHeroVideo();
@@ -645,6 +681,24 @@ function normalizeHeroInputPixels(delta, deltaMode = 0) {
   return value;
 }
 
+function discreteWheelNotches(rawPixels, legacyNotches, deltaMode) {
+  if (deltaMode === 2 || deltaMode === 1) return 1;
+  if (legacyNotches >= 0.75) return Math.max(1, Math.min(4, Math.round(legacyNotches)));
+
+  // Some Windows/remote mouse stacks omit wheelDelta but consistently emit
+  // one of these pixel magnitudes for a physical detent. Promote only those
+  // families; arbitrary high-resolution deltas remain proportional trackpad
+  // input instead of becoming accidental quarter-story jumps.
+  const hardwareBases = [120, 100, 53, 40];
+  for (const base of hardwareBases) {
+    const count = Math.round(rawPixels / base);
+    if (count < 1 || count > 4) continue;
+    const tolerance = Math.max(3, base * 0.08) * count;
+    if (Math.abs(rawPixels - base * count) <= tolerance) return count;
+  }
+  return 0;
+}
+
 function normalizeHeroWheelPixels(event) {
   const deltaY = Number(event && event.deltaY) || 0;
   const legacyDelta = Number(event && (event.wheelDeltaY || event.wheelDelta)) || 0;
@@ -656,22 +710,16 @@ function normalizeHeroWheelPixels(event) {
   const legacyNotches = Math.abs(legacyDelta) / 120;
   const pageInput = deltaMode === 2;
   const lineInput = deltaMode === 1;
-  // Real Windows mouse wheels commonly report 40 or 53 px per notch. Chrome
-  // also exposes the legacy ±120 wheelDelta for discrete wheels. Either signal
-  // is enough to promote the event to one device-independent impulse.
-  const looksDiscrete = lineInput || pageInput || legacyNotches >= 0.75 || rawPixels >= 24;
+  const notchCount = discreteWheelNotches(rawPixels, legacyNotches, deltaMode);
 
   let effectivePixels;
   let kind;
   if (pageInput) {
-    effectivePixels = Math.max(HERO_DISCRETE_WHEEL_PIXELS, window.innerHeight);
+    effectivePixels = HERO_DISCRETE_WHEEL_PIXELS;
     kind = 'page';
-  } else if (looksDiscrete) {
-    const notchCount = legacyNotches >= 0.75
-      ? Math.max(1, Math.min(2, legacyNotches))
-      : 1;
+  } else if (notchCount) {
     effectivePixels = HERO_DISCRETE_WHEEL_PIXELS * notchCount;
-    kind = 'wheel-notch';
+    kind = lineInput ? 'line-wheel-notch' : 'wheel-notch';
   } else {
     effectivePixels = rawPixels;
     kind = 'trackpad';
@@ -684,8 +732,10 @@ function normalizeHeroWheelPixels(event) {
     rawPixels,
     effectivePixels: direction * effectivePixels,
     kind,
+    normalizedNotches: notchCount,
     playbackRate: 1,
-    idleMs: HERO_INPUT_IDLE_MS
+    targetStepPercent: 1 / HERO_WHEEL_STEPS_PER_STORY,
+    boundaryExitGapMs: HERO_BOUNDARY_EXIT_GAP_MS
   };
   return direction * effectivePixels;
 }
@@ -704,7 +754,7 @@ function activateHeroDrive() {
   const baseFrame = targetFrame >= 0
     ? targetFrame
     : (presentedFrame >= 0 ? presentedFrame : fallbackFrame);
-  heroInputFrame = Math.max(0, Math.min(activeVariant.frameCount - 1, baseFrame));
+  setQueuedHeroTarget(baseFrame);
   if (lenis) lenis.stop();
   syncHeroScrollToPresentedFrame();
 }
@@ -750,7 +800,7 @@ function preventHeroInput(event) {
 
 function driveHeroWhileInputIsActive(pixelDelta, event) {
   if (!heroReady || !activeVariant || document.body.classList.contains('is-loading')) return false;
-  const pixels = Math.max(-360, Math.min(360, Number(pixelDelta) || 0));
+  const pixels = Math.max(-480, Math.min(480, Number(pixelDelta) || 0));
   const direction = Math.sign(pixels);
   if (!direction) return false;
   const now = performance.now();
@@ -768,7 +818,7 @@ function driveHeroWhileInputIsActive(pixelDelta, event) {
     // swallowed. Only a genuinely new gesture after an idle gap may leave the
     // hero, so the section never auto-exits while the wheel is still spinning.
     if (heroBoundaryDirection === direction &&
-        inputAt - heroBoundaryLastInputAt <= HERO_INPUT_IDLE_MS) {
+        inputAt - heroBoundaryLastInputAt <= HERO_BOUNDARY_EXIT_GAP_MS) {
       preventHeroInput(event);
       heroBoundaryLastInputAt = inputAt;
       return true;
@@ -781,7 +831,8 @@ function driveHeroWhileInputIsActive(pixelDelta, event) {
 
   activateHeroDrive();
   preventHeroInput(event);
-  startOrExtendHeroMotion(direction, inputAt);
+  const frameDelta = pixels / HERO_DISCRETE_WHEEL_PIXELS * heroStepFrames();
+  startOrExtendHeroMotion(direction, frameDelta, inputAt);
   return true;
 }
 
@@ -831,14 +882,15 @@ function handleHeroDocumentScroll() {
 }
 
 function heroDebugState() {
+  const stepFrames = activeVariant ? heroStepFrames() : null;
   return {
     active: heroDriveActive,
     motionActive: heroMotionActive,
     motionDirection: heroMotionDirection,
     motionMode: heroMotionMode,
-    idleMs: HERO_INPUT_IDLE_MS,
+    boundaryExitGapMs: HERO_BOUNDARY_EXIT_GAP_MS,
     inputSerial: heroMotionInputSerial,
-    decoderMode: 'visible-native-1x-forward-gop2-reverse',
+    decoderMode: 'visible-native-1x-quarter-targets-v21',
     videoPaused: heroVideo && heroVideo.paused,
     videoTime: heroVideo && heroVideo.currentTime,
     playbackRate: heroVideo && heroVideo.playbackRate,
@@ -850,6 +902,17 @@ function heroDebugState() {
       ? Math.max(0, performance.now() - heroMotionStartedAt)
       : 0),
     targetFrame,
+    queuedTargetFrame: targetFrame,
+    queuedTargetExact: heroQueuedTargetExact,
+    stepConfig: {
+      stepsPerStory: HERO_WHEEL_STEPS_PER_STORY,
+      segmentPercent: 1 / HERO_WHEEL_STEPS_PER_STORY,
+      segmentFrames: stepFrames,
+      segmentSeconds: activeVariant ? stepFrames / activeVariant.fps : null,
+      discreteWheelPixels: HERO_DISCRETE_WHEEL_PIXELS,
+      fps: activeVariant && activeVariant.fps,
+      frameCount: activeVariant && activeVariant.frameCount
+    },
     presentedFrame,
     canvasPresentedFrame,
     requestedFrame: lastRequestedFrame,
@@ -927,11 +990,9 @@ async function installVariant(key, options = {}) {
     objectUrl = null;
     activeVariant = variant;
     activeVariantKey = key;
-    lastRequestedFrame = installationFrame;
     presentedFrame = installationFrame;
     canvasPresentedFrame = -1;
-    targetFrame = installationFrame;
-    heroInputFrame = installationFrame;
+    setQueuedHeroTarget(installationFrame);
 
     candidate.playbackRate = 1;
     candidate.classList.add('is-ready', 'is-scrub-visible');
@@ -1092,8 +1153,8 @@ async function boot() {
 addEventListener('wheel', handleHeroWheel, { capture: true, passive: false });
 addEventListener('touchstart', handleHeroTouchStart, { capture: true, passive: true });
 addEventListener('touchmove', handleHeroTouchMove, { capture: true, passive: false });
-addEventListener('touchend', () => { heroTouchY = null; stopHeroMotion(); }, { capture: true, passive: true });
-addEventListener('touchcancel', () => { heroTouchY = null; stopHeroMotion(); }, { capture: true, passive: true });
+addEventListener('touchend', () => { heroTouchY = null; }, { capture: true, passive: true });
+addEventListener('touchcancel', () => { heroTouchY = null; }, { capture: true, passive: true });
 addEventListener('keydown', handleHeroKeyInput, { capture: true });
 addEventListener('scroll', handleHeroDocumentScroll, { passive: true });
 addEventListener('resize', queueHeroMeasure, { passive: true });

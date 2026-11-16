@@ -1,8 +1,8 @@
 {
-  "version": 13,
+  "version": 14,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
-    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=natural-speed-wheel-v20-2cd0d503",
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=quarter-target-v21-2cd0d503",
     "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
     "width": 1920,
     "height": 1080,
@@ -10,12 +10,16 @@
     "frameCount": 281,
     "scrubEncoding": "short-gop-2-crf20",
     "renderMode": "visible-native-video",
-    "interaction": "wheel-active-natural-speed-1x",
+    "interaction": "wheel-quarter-target-native-1x",
     "playbackRate": 1,
-    "idleStopMs": 160
+    "wheelStepsPerStory": 4,
+    "wheelStepPercent": 0.25,
+    "wheelStepFrames": 70,
+    "targetSegmentSeconds": 2.916667,
+    "boundaryExitGapMs": 180
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=natural-speed-wheel-v20-645a4cd8",
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=quarter-target-v21-645a4cd8",
     "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
     "width": 1080,
     "height": 1920,
@@ -24,9 +28,13 @@
     "scrubEncoding": "short-gop-2-crf20",
     "renderMode": "visible-native-video",
     "cropTracking": "car-and-garage-dynamic",
-    "interaction": "wheel-active-natural-speed-1x",
+    "interaction": "wheel-quarter-target-native-1x",
     "playbackRate": 1,
-    "idleStopMs": 160
+    "wheelStepsPerStory": 4,
+    "wheelStepPercent": 0.25,
+    "wheelStepFrames": 70,
+    "targetSegmentSeconds": 2.916667,
+    "boundaryExitGapMs": 180
   },
   "beats": [
     [
