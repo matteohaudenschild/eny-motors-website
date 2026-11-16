@@ -136,8 +136,11 @@ let heroTouchY = null;
 // roughly 30 turns. Discrete wheel input is now hardware-normalized while
 // small high-resolution trackpad deltas remain continuous.
 const HERO_DISCRETE_WHEEL_PIXELS = 120;
-const HERO_WHEEL_STEPS_PER_STORY = 4;
-const HERO_TRACKPAD_GAIN = 9.6;
+// Two normalized wheel notches drive the complete hero. The next gesture,
+// after the final frame is actually visible, releases the page into section 2.
+const HERO_WHEEL_STEPS_PER_STORY = 2;
+// Three tiny remote/trackpad impulses of deltaY=8 also complete the story.
+const HERO_TRACKPAD_GAIN = 10;
 const heroWheelPixelsPerStory = HERO_DISCRETE_WHEEL_PIXELS * HERO_WHEEL_STEPS_PER_STORY;
 let lastHeroWheelDiagnostics = null;
 
