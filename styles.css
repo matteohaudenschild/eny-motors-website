@@ -8,6 +8,12 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{background:var(--bg);color:var(--ink);-webkit-text-size-adjust:100%}
+/* No native scrollbar, ever: otherwise it appears at load and vanishes when
+   the hero takes over the wheel (Lenis stop toggles overflow), which widens the
+   page by the scrollbar width, rescales the hero and causes a visible hitch.
+   Scrolling by wheel, keys and touch is unaffected. */
+html,body{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none;width:0;height:0}
 body{background:var(--bg);font-family:var(--body);overflow-x:clip}
 body.is-loading{overflow:hidden}
 img,video,canvas{display:block;max-width:100%}
@@ -64,7 +70,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .hero__poster{z-index:0;background:var(--bg)}
 .hero__poster img{width:100%;height:100%;object-fit:cover;object-position:center}
 .hero__video{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
-.hero__video.is-ready,.hero__video.is-scrub-visible{opacity:1}
+.hero__video.is-scrub-visible{opacity:1}
 .hero__canvas{z-index:1;max-width:none;opacity:0;background:var(--bg);transition:none}
 .hero__canvas.is-ready{opacity:1}
 .hero__canvas.is-scrub-hidden{opacity:0!important;transition:none}

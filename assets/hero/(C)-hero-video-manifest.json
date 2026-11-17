@@ -1,39 +1,29 @@
 {
-  "version": 14,
+  "version": 15,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
-    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=quarter-target-v21-2cd0d503",
+    "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=proportional-v22-sharp-3e8d05a4",
     "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
     "width": 1920,
     "height": 1080,
     "fps": 24,
     "frameCount": 281,
-    "scrubEncoding": "short-gop-2-crf20",
-    "renderMode": "visible-native-video",
-    "interaction": "wheel-quarter-target-native-1x",
-    "playbackRate": 1,
-    "wheelStepsPerStory": 4,
-    "wheelStepPercent": 0.25,
-    "wheelStepFrames": 70,
-    "targetSegmentSeconds": 2.916667,
+    "scrubEncoding": "short-gop-2-crf20-cas0.2-frames0-120",
+    "renderMode": "paused-decoder-canvas",
+    "interaction": "wheel-proportional-spring-v22b",
     "boundaryExitGapMs": 180
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=quarter-target-v21-645a4cd8",
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=proportional-v22-sharp-5e6681c1",
     "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
     "width": 1080,
     "height": 1920,
     "fps": 24,
     "frameCount": 281,
-    "scrubEncoding": "short-gop-2-crf20",
-    "renderMode": "visible-native-video",
+    "scrubEncoding": "short-gop-2-crf20-cas0.2-frames0-120",
+    "renderMode": "paused-decoder-canvas",
     "cropTracking": "car-and-garage-dynamic",
-    "interaction": "wheel-quarter-target-native-1x",
-    "playbackRate": 1,
-    "wheelStepsPerStory": 4,
-    "wheelStepPercent": 0.25,
-    "wheelStepFrames": 70,
-    "targetSegmentSeconds": 2.916667,
+    "interaction": "wheel-proportional-spring-v22b",
     "boundaryExitGapMs": 180
   },
   "beats": [
@@ -93,5 +83,13 @@
       "at": 0.9,
       "sound": "whoosh"
     }
-  ]
+  ],
+  "sync": {
+    "model": "proportional-spring-capped",
+    "framesPerNotch": 10,
+    "followOmega": 14,
+    "maxSpeed": 1.75,
+    "leadNotches": 1.5,
+    "note": "One mouse-wheel detent = 10 frames (0.42 s). Critically damped spring (omega 14/s) with speed cap 1.75x real time so every film frame is shown in order; target leads by at most 1.5 detents."
+  }
 }
