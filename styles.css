@@ -233,3 +233,42 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 .beat--end .beat__big{font-size:clamp(44px,6.5vw,104px)}
 .beat--end{background:linear-gradient(rgba(0,0,0,.55),transparent 55%)}
 @media (max-width:760px){.beat--top .beat__kicker{letter-spacing:.18em}}
+
+/* ---------- presentation polish (v22g) ---------- */
+/* start screen: the hint only blinks once the buttons work */
+.start__hint{animation:none}
+.start.is-open .start__hint{animation:blink 1.6s infinite}
+@media (max-width:760px){.start__sub{letter-spacing:.2em;font-size:11px}}
+/* the film is still loading after entering early */
+.hero__loading{position:absolute;z-index:6;left:50%;bottom:80px;transform:translateX(-50%);padding:8px 16px;border-radius:999px;background:rgba(5,6,7,.72);color:#cfd;font-size:11px;letter-spacing:.2em;text-transform:uppercase;white-space:nowrap;opacity:0;transition:opacity .4s;pointer-events:none}
+.hero__loading.is-on{opacity:1}
+/* a rotated phone keeps its portrait film: show it whole */
+@media (orientation:landscape) and (max-height:500px) and (pointer:coarse){.hero__canvas,.hero__poster img{object-fit:contain}}
+/* hero subtitle readable over the busy storefront */
+.beat--top .beat__kicker{display:inline-block;padding:7px 16px;border-radius:999px;background:rgba(5,6,7,.58);color:#fff;font-weight:600}
+/* select: keep the package card and its button on screen on big monitors */
+.select > .sec-tag,.select__wrap,.select__keys{max-width:1400px}
+@media (min-width:901px){
+  .select__media img{position:absolute;inset:0}
+  .select__stage{height:auto;min-height:clamp(540px,calc(100vh - 210px),720px)}
+}
+@media (max-width:900px){.select__keys{display:block}.select__kbd{display:none}}
+/* wipe: readable meter label; on touch, vertical swipes scroll the page */
+.wipe__meter span{mix-blend-mode:normal;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.85)}
+@media (pointer:coarse){.wipe__box{touch-action:pan-y;max-height:64svh}}
+/* the lot: names above the card's gradient; cards fit the phone width */
+.card__label{z-index:2}
+@media (max-width:760px){.lot .card:not(.card--title){height:auto;width:min(80vw,calc(min(64svh,640px)*.75))}}
+/* upgrades: icon zone stays free; even rows */
+.tile{padding-top:64px}
+a.tile{color:inherit;text-decoration:none}
+.tile--ask{border-style:dashed}
+.more__grid{max-width:1400px}
+
+@media (min-width:1100px){.more__grid{grid-template-columns:repeat(4,1fr)}}
+/* visit: soft top edge instead of a hard seam */
+.visit::before{background:linear-gradient(var(--bg),transparent 25%),linear-gradient(90deg,var(--bg) 10%,rgba(5,6,7,.4) 70%),linear-gradient(transparent 60%,var(--bg))}
+@media (max-width:760px){.foot{flex-direction:column;align-items:flex-start;gap:10px}}
+/* while the film loads the pill replaces the scroll cue */
+.hero__sticky.is-film-loading .hero__scrollcue{opacity:0!important}
+@media (max-width:430px){.beat--top .beat__kicker{letter-spacing:.1em;font-size:11px;white-space:nowrap}}

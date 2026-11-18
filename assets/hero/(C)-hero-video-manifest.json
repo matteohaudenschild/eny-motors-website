@@ -1,9 +1,9 @@
 {
-  "version": 15,
+  "version": 16,
   "breakpoint": "(max-width: 760px)",
   "desktop": {
     "src": "assets/hero/(C)-hero-v1-desktop.mp4?v=proportional-v22-sharp-3e8d05a4",
-    "poster": "assets/hero/(C)-hero-v1-desktop-start.png?v=hybrid-sharp-full-car-v15-94a88f9e-30133202",
+    "poster": "assets/hero/(C)-hero-v1-desktop-start.jpg?v=present-v22g-37333f5b",
     "width": 1920,
     "height": 1080,
     "fps": 24,
@@ -11,20 +11,20 @@
     "scrubEncoding": "short-gop-2-crf20-cas0.2-frames0-120",
     "renderMode": "paused-decoder-canvas",
     "interaction": "wheel-proportional-spring-v22b",
-    "boundaryExitGapMs": 180
+    "boundaryExitGapMs": 350
   },
   "mobile": {
-    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=proportional-v22-sharp-5e6681c1",
-    "poster": "assets/hero/(C)-hero-v1-mobile-start.png?v=hybrid-sharp-fast-v15-ffd66af2-1d48fb62",
-    "width": 1080,
-    "height": 1920,
+    "src": "assets/hero/(C)-hero-v1-mobile.mp4?v=present-v22g-80a8a539",
+    "poster": "assets/hero/(C)-hero-v1-mobile-start.jpg?v=present-v22g-b2eb98e5",
+    "width": 720,
+    "height": 1280,
     "fps": 24,
     "frameCount": 281,
-    "scrubEncoding": "short-gop-2-crf20-cas0.2-frames0-120",
+    "scrubEncoding": "720x1280-short-gop-2-crf22-cas0.2-frames0-120",
     "renderMode": "paused-decoder-canvas",
     "cropTracking": "car-and-garage-dynamic",
     "interaction": "wheel-proportional-spring-v22b",
-    "boundaryExitGapMs": 180
+    "boundaryExitGapMs": 350
   },
   "beats": [
     [

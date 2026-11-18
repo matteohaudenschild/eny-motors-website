@@ -173,7 +173,10 @@ const HERO_DEFAULT_FRAMES_PER_NOTCH = 10;
 const HERO_DEFAULT_FOLLOW_OMEGA = 14;       // 1/s, single detent settles ≈ 0.42 s
 const HERO_DEFAULT_MAX_SPEED = 1.75;        // × real-time film speed
 const HERO_TOUCH_FOLLOW_OMEGA = 24;         // a dragged finger is followed tighter
-const HERO_TOUCH_MAX_SPEED = 3;
+const HERO_TOUCH_MAX_SPEED = 4;
+// A finger may run further ahead of the picture than a wheel (a fast swipe
+// must not lose most of its distance); back-pressure still keeps it in order.
+const HERO_TOUCH_LEAD_FRAMES = 280;   // a swipe is never cut short
 const HERO_DEFAULT_LEAD_NOTCHES = 1.5;
 const HERO_MAX_NOTCHES_PER_EVENT = 4;
 const HERO_PIXELS_PER_NOTCH = 100;
@@ -184,7 +187,7 @@ const HERO_SETTLE_SPEED = 12;               // film frames per second
 const HERO_TOUCH_VIEWPORTS_PER_STORY = 1.5;
 // Only prevents the tail of the roll that reached an endpoint from instantly
 // throwing the page out of the sticky hero; a fresh outward input exits.
-const HERO_BOUNDARY_EXIT_GAP_MS = 180;
+const HERO_BOUNDARY_EXIT_GAP_MS = 350;   // counted from reaching the end
 let heroFramesPerNotch = HERO_DEFAULT_FRAMES_PER_NOTCH;
 let heroFollowOmega = HERO_DEFAULT_FOLLOW_OMEGA;
 let heroMaxSpeed = HERO_DEFAULT_MAX_SPEED;
@@ -194,7 +197,15 @@ function heroWheelProfile() {
   return { omega: heroFollowOmega, maxSpeed: heroMaxSpeed };
 }
 function heroTouchProfile() {
-  return { omega: HERO_TOUCH_FOLLOW_OMEGA, maxSpeed: Math.max(heroMaxSpeed, HERO_TOUCH_MAX_SPEED) };
+  return {
+    omega: HERO_TOUCH_FOLLOW_OMEGA,
+    maxSpeed: Math.max(heroMaxSpeed, HERO_TOUCH_MAX_SPEED),
+    leadFrames: HERO_TOUCH_LEAD_FRAMES
+  };
+}
+// Keys (PageDown/Space = 3 detents) always deliver their full distance.
+function heroKeyProfile(frames) {
+  return { ...heroWheelProfile(), leadFrames: Math.abs(frames) };
 }
 let lastHeroWheelDiagnostics = null;
 const heroWheelLog = [];
@@ -365,6 +376,8 @@ function afterPaint() {
 }
 
 function selectedVariantKey() {
+  // A phone held sideways still gets the (lighter) portrait film.
+  if (HERO_TOUCH_UI && Math.min(screen.width, screen.height) <= 760) return 'mobile';
   return heroMediaQuery && heroMediaQuery.matches ? 'mobile' : 'desktop';
 }
 
@@ -664,10 +677,12 @@ function settleHeroBoundary(frame) {
   if (frame <= 0) direction = -1;
   else if (frame >= lastFrame) direction = 1;
   else return;
-  // Inputs swallowed during the glide into this end count as the same roll.
-  const swallowedAt = heroBoundaryDirection === direction ? heroBoundaryLastInputAt : 0;
+  // Remember when this end was reached (once; repeated composites at rest
+  // must not restart the window).
+  if (heroBoundaryDirection !== direction || !heroBoundaryLastInputAt) {
+    heroBoundaryLastInputAt = performance.now();
+  }
   heroBoundaryDirection = direction;
-  heroBoundaryLastInputAt = Math.max(swallowedAt, heroMotionLastInputAt || 0) || performance.now();
 }
 
 /* Stops the chase where the picture currently is. Nothing keeps moving
@@ -798,7 +813,7 @@ function startOrExtendHeroMotion(frameDelta, inputAt = performance.now(), profil
     heroDisplayVelocity = 0;
   }
 
-  const lead = Math.max(1, heroLeadNotches * heroFramesPerNotch);
+  const lead = Math.max(1, heroLeadNotches * heroFramesPerNotch, Number(profile && profile.leadFrames) || 0);
   // Whole-frame inputs (wheel detents, keys) keep the target on whole frames,
   // so a glide never ends with a rounding snap; trackpad/touch stay fractional.
   const whole = Number.isInteger(frameDelta);
@@ -958,9 +973,16 @@ function queueHeroMeasure() {
    wheelDelta entirely, the known per-detent pixel families still count as one
    detent; everything else is proportional. Nothing is promoted beyond its
    real distance. */
+// macOS/iOS browsers derive wheelDelta from the pixel delta (×3), so a small
+// trackpad or Magic Mouse movement can look like a whole detent there. On
+// Apple devices every wheel event is therefore treated as proportional.
+const HERO_APPLE_INPUT = /Mac|iPhone|iPad|iPod/i.test(
+  (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ''
+) || /Mac OS X/.test(navigator.userAgent || '');
+
 function heroDetentsFromLegacy(legacy) {
   const magnitude = Math.abs(legacy);
-  if (!magnitude) return 0;
+  if (!magnitude || HERO_APPLE_INPUT) return 0;
   const dpr = Math.max(0.5, Number(window.devicePixelRatio) || 1);
   for (const ticks of [magnitude / 120, magnitude * dpr / 120]) {
     const whole = Math.round(ticks);
@@ -972,6 +994,7 @@ function heroDetentsFromLegacy(legacy) {
 }
 
 function heroDetentsFromPixels(pixels) {
+  if (HERO_APPLE_INPUT) return 0;
   for (const base of [120, 100, 53, 40]) {
     const count = Math.round(pixels / base);
     if (count < 1 || count > HERO_MAX_NOTCHES_PER_EVENT) continue;
@@ -990,6 +1013,9 @@ function heroLegacyWheelDelta(event) {
 
 function normalizeHeroWheel(event) {
   const deltaY = Number(event && event.deltaY) || 0;
+  // Sideways gestures (Shift+wheel, horizontal trackpad swipe) are not meant
+  // for the film and are left to the browser.
+  if (Math.abs(Number(event && event.deltaX) || 0) > Math.abs(deltaY)) return null;
   const deltaMode = Number(event && event.deltaMode) || 0;
   const legacy = heroLegacyWheelDelta(event);
   const direction = Math.sign(deltaY || -legacy);
@@ -1132,12 +1158,19 @@ function driveHeroByInput(frameDelta, exitPixels, event, profile = heroWheelProf
     // that end. Only a genuinely new gesture after an idle gap may leave the
     // hero, so the section never auto-exits while the wheel is still spinning
     // (and never flips between hero and page while flicking back and forth).
-    const sameRoll = heroBoundaryDirection === direction &&
-      inputAt - heroBoundaryLastInputAt <= HERO_BOUNDARY_EXIT_GAP_MS;
-    if (heroMotionActive || sameRoll) {
+    if (heroMotionActive) {
+      // Still gliding into this end: swallow; the window starts once it lands.
       preventHeroInput(event);
       heroBoundaryDirection = direction;
-      heroBoundaryLastInputAt = inputAt;
+      return true;
+    }
+    // The window counts from the moment the end was reached and is not
+    // refreshed by further events, so a steadily spinning wheel or a long
+    // trackpad momentum tail continues into the page after a short beat.
+    const sameRoll = heroBoundaryDirection === direction &&
+      inputAt - heroBoundaryLastInputAt <= HERO_BOUNDARY_EXIT_GAP_MS;
+    if (sameRoll) {
+      preventHeroInput(event);
       return true;
     }
 
@@ -1175,6 +1208,8 @@ function handleHeroTouchMove(event) {
   const nextY = event.touches[0].clientY;
   const delta = heroTouchY - nextY;
   heroTouchY = nextY;
+  // Native scrolling already owns this gesture; the next one drives the film.
+  if (!event.cancelable) return;
   const storyPixels = Math.max(1, HERO_TOUCH_VIEWPORTS_PER_STORY * window.innerHeight);
   const frames = delta / storyPixels * heroLastFrame();
   driveHeroByInput(frames, delta, event, heroTouchProfile());
@@ -1190,7 +1225,10 @@ function handleHeroKeyInput(event) {
   else if (event.key === 'ArrowUp') notches = -1;
   else if (event.key === 'PageDown' || (event.key === ' ' && !event.shiftKey)) notches = 3;
   else if (event.key === 'PageUp' || (event.key === ' ' && event.shiftKey)) notches = -3;
-  if (notches) driveHeroByInput(notches * heroFramesPerNotch, notches * HERO_PIXELS_PER_NOTCH, event);
+  if (notches) {
+    const frames = notches * heroFramesPerNotch;
+    driveHeroByInput(frames, notches * HERO_PIXELS_PER_NOTCH, event, heroKeyProfile(frames));
+  }
 }
 
 function handleHeroDocumentScroll() {
@@ -1449,8 +1487,50 @@ function configureManifest(manifest) {
     : [];
 }
 
+/* The start screen opens as soon as the poster is on screen; the film keeps
+   loading in the background. Until it is ready the page scrolls normally over
+   the poster (driveHeroByInput ignores input while !heroReady) and a small
+   pill shows the progress. */
+let startOpen = false;
+let startLeft = false;
+let filmFailed = false;
+let heroLoadPill = null;
+const HERO_TOUCH_UI = typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches;
+
+function showHeroLoadPill(text) {
+  if (!heroLoadPill && text && heroSticky) {
+    heroLoadPill = document.createElement('div');
+    heroLoadPill.className = 'hero__loading';
+    heroLoadPill.setAttribute('aria-live', 'polite');
+    heroSticky.appendChild(heroLoadPill);
+  }
+  if (!heroLoadPill) return;
+  if (text) heroLoadPill.textContent = text;
+  heroLoadPill.classList.toggle('is-on', Boolean(text));
+  heroSticky.classList.toggle('is-film-loading', Boolean(text));
+}
+
+function reportFilmProgress(fraction) {
+  setLoadProgress(0.05 + clamp(fraction) * 0.95);
+  if (startLeft && !heroReady && !filmFailed) showHeroLoadPill('Loading film ' + Math.round(clamp(fraction) * 100) + '%');
+}
+
+function openStart() {
+  if (startOpen) return;
+  startOpen = true;
+  $('#start').classList.add('is-open');
+  startSound.disabled = false;
+  startMute.disabled = false;
+  startSound.textContent = 'Enter with sound';
+  startMute.textContent = 'Enter silently';
+  startSound.onclick = () => leaveStart(true);
+  startMute.onclick = () => leaveStart(false);
+}
+
 function leaveStart(withSound) {
-  if (!heroReady) return;
+  if (!startOpen || startLeft) return;
+  startLeft = true;
+  if (!heroReady && !filmFailed) showHeroLoadPill('Loading film');
   if (withSound) Sound.set(true);
   $('#start').classList.add('is-gone');
   document.body.classList.remove('is-loading');
@@ -1466,23 +1546,28 @@ function leaveStart(withSound) {
 function enableStart() {
   heroReady = true;
   setLoadProgress(1);
-  startSound.disabled = false;
-  startMute.disabled = false;
-  startSound.textContent = 'Enter with sound';
-  startSound.onclick = () => leaveStart(true);
-  startMute.onclick = () => leaveStart(false);
+  openStart();
+  showHeroLoadPill('');
+  // ?skip=1 (QA links) enters only once the film is ready.
   if (params.has('skip')) leaveStart(false);
+  if (startLeft) {
+    queueHeroMeasure();
+    queueHeroRender({ snap: true });
+  }
 }
 
 function showBootError(error) {
   console.error('Hero video boot failed:', error);
   heroReady = false;
-  setLoadProgress(0);
-  startHint.textContent = 'Hero video could not load';
-  startSound.disabled = false;
-  startMute.disabled = true;
-  startSound.textContent = 'Retry video';
+  filmFailed = true;
+  showHeroLoadPill('');
+  openStart();
+  // The site stays usable over the poster; the film can be retried.
+  startHint.textContent = 'Film unavailable · the site works without it';
+  startSound.textContent = 'Retry film';
   startSound.onclick = () => location.reload();
+  startMute.textContent = 'Enter without film';
+  if (params.has('skip')) leaveStart(false);
 }
 
 function handleVariantChange() {
@@ -1492,6 +1577,8 @@ function handleVariantChange() {
     if (variantAbort) variantAbort.abort();
     return;
   }
+  // A rotated phone keeps the film it already has (no second 40 MB download).
+  if (HERO_TOUCH_UI && activeVariantKey && Math.min(screen.width, screen.height) <= 760) return;
   installVariant(key).catch(error => {
     if (!isAbortError(error)) console.error('Hero variant switch failed:', error);
   });
@@ -1503,16 +1590,23 @@ async function boot() {
     if (!hero || !heroSticky || !heroPoster || !heroVideo) throw new Error('The hero video markup is incomplete.');
 
     setLoadProgress(0.02);
+    if (HERO_TOUCH_UI) startHint.textContent = 'Swipe to drive';
     const response = await fetch('assets/hero/(C)-hero-video-manifest.json', { cache: 'no-cache' });
     if (!response.ok) throw new Error('Hero manifest request failed (' + response.status + ').');
     configureManifest(await response.json());
 
     heroMediaQuery = matchMedia(heroManifest.breakpoint || '(max-width: 760px)');
     measureHero();
+    // Open the start screen once the poster is decoded (at most ~5 s).
+    const posterImg = $('img', heroPoster);
+    const posterReady = posterImg && typeof posterImg.decode === 'function'
+      ? posterImg.decode().catch(() => {})
+      : Promise.resolve();
+    Promise.race([posterReady, new Promise(resolve => setTimeout(resolve, 5000))]).then(openStart);
     const key = selectedVariantKey();
     const loaded = await installVariant(key, {
       initial: true,
-      onProgress: fraction => setLoadProgress(0.05 + clamp(fraction) * 0.95)
+      onProgress: reportFilmProgress
     });
     if (!loaded) throw abortError();
 
@@ -1544,7 +1638,9 @@ if ('ResizeObserver' in window) {
 }
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueHeroMeasure);
 addEventListener('keydown', event => {
-  if (event.key === 'Enter' && document.body.classList.contains('is-loading') && heroReady) {
+  // A focused start button decides for itself (sound or silent).
+  if (event.target && event.target.closest && event.target.closest('button')) return;
+  if (event.key === 'Enter' && document.body.classList.contains('is-loading') && startOpen) {
     leaveStart(true);
   }
 });
@@ -1687,6 +1783,12 @@ PKGS.forEach((k, i) => {
 function pick(i, user) {
   if (i === cur) return; cur = i; const k = PKGS[i];
   [...list.children].forEach((b, j) => b.setAttribute('aria-selected', j === i));
+  // Phones show the packages as a sideways row: keep the selected one in view
+  // (scrolls only the row, never the page).
+  const sel = list.children[i];
+  if (sel && list.scrollWidth > list.clientWidth + 1) {
+    list.scrollTo({ left: sel.offsetLeft - list.offsetLeft - (list.clientWidth - sel.offsetWidth) / 2, behavior: user ? 'smooth' : 'auto' });
+  }
   stage.style.setProperty('--c', k.c);
   $('#pkgTier').textContent = k.tier; $('#pkgName').textContent = k.name; $('#pkgNote').textContent = k.note || '';
   $('#pkgChips').innerHTML = k.items.map((t, j) => `<li style="animation-delay:${j * 45}ms">${t}</li>`).join('');
@@ -1710,6 +1812,9 @@ addEventListener('keydown', e => {
   const box = $('#wipeBox'), cv = $('#wipeCanvas'), c = cv.getContext('2d');
   const meter = $('#wipeMeter'), pct = $('#wipePct'), done = $('#wipeDone'), hint = $('#wipeHint');
   const cursor = document.createElement('div'); cursor.className = 'wipe__cursor'; document.body.appendChild(cursor);
+  // On touch screens vertical swipes scroll the page (touch-action:pan-y);
+  // sideways strokes wipe.
+  if (matchMedia('(pointer:coarse)').matches) hint.textContent = 'Swipe sideways to wipe';
   let w, h, finished = false, last = null, lastCheck = 0;
   // Only the car gets dirty: a cut-out of the car (same framing as the photo)
   // clips the grime, and "% clean" counts car pixels only.
@@ -1763,6 +1868,7 @@ addEventListener('keydown', e => {
   }
   function update(v) { meter.style.width = v + '%'; pct.textContent = v + '% clean'; }
   function stroke(x, y) {
+    if (finished) return;   // the meter stays at 100 % once the car shines
     c.globalCompositeOperation = 'destination-out';
     const R = Math.max(34, w / 11);
     const seg2 = (ax, ay) => { const g = c.createRadialGradient(ax, ay, 0, ax, ay, R); g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(.6, 'rgba(0,0,0,.9)'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.beginPath(); c.arc(ax, ay, R, 0, 7); c.fill(); };
@@ -1797,7 +1903,15 @@ addEventListener('keydown', e => {
   cv.addEventListener('pointerleave', () => { last = null; cursor.style.opacity = 0; });
   cv.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') cursor.style.opacity = 1; });
   $('#wipeAgain').onclick = dirty;
-  let rs; addEventListener('resize', () => { clearTimeout(rs); rs = setTimeout(() => { if (!finished) dirty(); }, 300); });
+  // Redraw only if the box itself changed size: phone toolbars collapsing on
+  // scroll fire 'resize' too and must not wipe the visitor's progress.
+  let rs; addEventListener('resize', () => {
+    clearTimeout(rs);
+    rs = setTimeout(() => {
+      const r = box.getBoundingClientRect();
+      if (!finished && (Math.round(r.width) !== w || Math.round(r.height) !== h)) dirty();
+    }, 300);
+  });
   dirty();
 })();
 
@@ -1859,13 +1973,13 @@ addEventListener('keydown', e => {
 /* ===================================================== UPGRADES */
 (() => {
   const T = [
-    ['🕶️', 'Window Tint', 'Blocks 99%+ of harmful UV · 94% glare reduction', '#5ef2d3'],
-    ['💎', 'Ceramic Tint', 'High optical clarity, minimal reflection', '#7fd8ff'],
-    ['🛡️', 'Paint Protection Film', 'Self-healing · scratch & stain resistant', '#9b4dff'],
+    ['🕶️', 'Window Tint', 'Privacy and a cooler cabin', '#5ef2d3'],
+    ['💎', 'Ceramic Tint', 'Premium ceramic film', '#7fd8ff'],
+    ['🛡️', 'Paint Protection Film', 'Clear film against chips and scratches', '#9b4dff'],
     ['🎨', 'Vehicle Wraps', 'Any color · 3M · Avery Dennison · XPEL', '#ff4fa0'],
     ['✨', 'Ceramic Coating', 'Deep gloss that stays', '#5ef2d3'],
     ['🔧', 'Powder Coating', 'Wheels in any finish', '#ff8a2a'],
-    ['🔴', 'Calipers Painting', 'Color behind the spokes', '#ff3d3d'],
+    ['🔴', 'Caliper Painting', 'Color behind the spokes', '#ff3d3d'],
     ['🌌', 'Star Lights', 'A night sky in your headliner', '#9b4dff'],
     ['💡', 'Headlight Restoration', 'Clear lenses again', '#ffe14d'],
     ['🪞', 'Paint Correction', 'Polish out swirls & scratches', '#7fd8ff'],
@@ -1879,6 +1993,13 @@ addEventListener('keydown', e => {
     t.addEventListener('pointermove', e => { const r = t.getBoundingClientRect(); t.style.setProperty('--mx', (e.clientX - r.left) + 'px'); t.style.setProperty('--my', (e.clientY - r.top) + 'px'); });
     g.appendChild(t);
   });
+  // 12th tile: a way to ask for anything else (also keeps the grid even).
+  const ask = document.createElement('a');
+  ask.className = 'tile tile--ask';
+  ask.href = 'https://ig.me/m/enymotors'; ask.target = '_blank'; ask.rel = 'noopener';
+  ask.style.setProperty('--tc', '#5ef2d355'); ask.style.setProperty('--tcs', '#5ef2d3');
+  ask.innerHTML = '<span class="tile__ic">💬</span><b>Something else?</b><small>DM @enymotors on Instagram</small>';
+  g.appendChild(ask);
 })();
 
 /* background clips: only play when visible */
