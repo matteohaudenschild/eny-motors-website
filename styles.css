@@ -228,7 +228,8 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 @media (prefers-reduced-motion:reduce){.hero__grain,.start__hint{animation:none}}
 
 /* hero text sits above the car, so the Rolls stays visible */
-.beat--top{justify-content:flex-start;padding-top:max(84px,11vh)}
+.beat--top{justify-content:flex-start;padding-top:max(84px,calc(22.4vh - 61px))}
 .beat--top .logo--hero{font-size:clamp(56px,9vw,150px)}
 .beat--end .beat__big{font-size:clamp(44px,6.5vw,104px)}
 .beat--end{background:linear-gradient(rgba(0,0,0,.55),transparent 55%)}
+@media (max-width:760px){.beat--top .beat__kicker{letter-spacing:.18em}}
