@@ -523,9 +523,11 @@ function compositeHero(exact) {
     canvasFrameHistory.push(shown);
     if (canvasFrameHistory.length > 1200) canvasFrameHistory.splice(0, 600);
   }
-  // Exactly frame 0 at rest deliberately shows the separately approved,
-  // sharper poster (pixel-aligned with the film's first frame).
-  heroCanvas.classList.toggle('is-ready', x > 0.001 || shown > 0);
+  // Before the first input frame 0 shows the poster (it is there before the
+  // video has loaded). Once the visitor drives the hero the canvas stays up,
+  // also at frame 0: the sharpened film frame matches the poster's sharpness,
+  // and swapping texture on every return to frame 0 read as a flicker.
+  heroCanvas.classList.toggle('is-ready', x > 0.001 || shown > 0 || heroMotionInputSerial > 0);
   commitPresentedHeroFrame(shown);
 
   if (!heroMotionActive && x === Math.round(x) && shown === targetFrame && Math.round(x) === targetFrame) {
@@ -1593,6 +1595,71 @@ if (params.get('debug') === 'wheel') {
   document.body.appendChild(heroWheelOverlay);
 }
 
+/* ?debug=perf: live smoothness meter for the real screen. While the hero is
+   moving it counts, per part of the film, refreshes that came late (dropped
+   frames), refreshes where the picture stood still although it should move,
+   and how long the video decoder needs per frame. */
+if (params.get('debug') === 'perf') {
+  const zones = [['Anfang 0-70', 70], ['Mitte 70-200', 200], ['Ende 200-280', Infinity]];
+  const stats = zones.map(([name]) => ({ name, refreshes: 0, late: 0, stallMs: 0, maxGap: 0, frozen: 0, seeks: [] }));
+  const zoneOf = frame => stats[zones.findIndex(([, upTo]) => frame < upTo)];
+  const box = document.createElement('pre');
+  box.style.cssText = 'position:fixed;z-index:9999;left:12px;top:12px;margin:0;padding:10px 12px;' +
+    'font:12px/1.5 ui-monospace,Consolas,monospace;color:#5ef2d3;background:rgba(0,0,0,.82);' +
+    'border:1px solid rgba(94,242,211,.4);border-radius:8px;pointer-events:none;white-space:pre';
+  document.body.appendChild(box);
+  let gpu = 'n/a';
+  try {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    if (info) gpu = String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)).replace(/^ANGLE \(|\)$/g, '').slice(0, 60);
+  } catch (error) {}
+  let seekStart = 0;
+  document.addEventListener('seeking', event => { if (event.target === heroVideo) seekStart = performance.now(); }, true);
+  document.addEventListener('seeked', event => {
+    if (event.target !== heroVideo || !seekStart) return;
+    const zone = zoneOf(presentedFrame < 0 ? 0 : presentedFrame);
+    zone.seeks.push(performance.now() - seekStart);
+    if (zone.seeks.length > 400) zone.seeks.shift();
+    seekStart = 0;
+  }, true);
+  const pct = (list, q) => {
+    if (!list.length) return '-';
+    const sorted = list.slice().sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))].toFixed(0);
+  };
+  let last = 0;
+  let lastComposite = 0;
+  let paintAt = 0;
+  const tick = now => {
+    const gap = last ? now - last : 0;
+    last = now;
+    const latest = canvasPresentationHistory.at(-1);
+    const drew = latest && latest.now !== lastComposite;
+    if (latest) lastComposite = latest.now;
+    if (heroMotionActive && gap) {
+      const zone = zoneOf(presentedFrame < 0 ? 0 : presentedFrame);
+      zone.refreshes += 1;
+      if (gap > 25) zone.late += 1;
+      if (gap > 50) zone.stallMs += gap;
+      zone.maxGap = Math.max(zone.maxGap, gap);
+      if (!drew && Math.abs(heroTargetExact - heroDisplayExact) > 1) zone.frozen += 1;
+    }
+    if (now - paintAt > 250) {
+      paintAt = now;
+      box.textContent =
+        `ENY perf  ${innerWidth}x${innerHeight} @${devicePixelRatio}x  ${gpu}\n` +
+        `frame ${presentedFrame}  ${heroMotionActive ? 'bewegt' : 'steht'}\n\n` +
+        'Teil           Refreshes  zu spät  Hänger-ms  max-ms  Bild-steht  Decode p50/p95 ms\n' +
+        stats.map(s => `${s.name.padEnd(14)} ${String(s.refreshes).padStart(9)} ${String(s.late).padStart(8)} ` +
+          `${String(Math.round(s.stallMs)).padStart(10)} ${String(Math.round(s.maxGap)).padStart(7)} ` +
+          `${String(s.frozen).padStart(11)}  ${pct(s.seeks, 0.5)}/${pct(s.seeks, 0.95)}`).join('\n');
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 boot();
 
 /* ===================================================== SELECT YOUR WASH */
@@ -1644,6 +1711,31 @@ addEventListener('keydown', e => {
   const meter = $('#wipeMeter'), pct = $('#wipePct'), done = $('#wipeDone'), hint = $('#wipeHint');
   const cursor = document.createElement('div'); cursor.className = 'wipe__cursor'; document.body.appendChild(cursor);
   let w, h, finished = false, last = null, lastCheck = 0;
+  // Only the car gets dirty: a cut-out of the car (same framing as the photo)
+  // clips the grime, and "% clean" counts car pixels only.
+  const carMask = new Image();
+  let carSamples = null;
+  carMask.onload = () => { if (!finished) dirty(); };
+  carMask.src = 'assets/photos/(C)-18-bentley-car-mask.png';
+  function drawCover(ctx, image) {
+    // same placement as the photo's object-fit: cover, centred
+    const s = Math.max(w / image.naturalWidth, h / image.naturalHeight);
+    const dw = image.naturalWidth * s, dh = image.naturalHeight * s;
+    ctx.drawImage(image, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  }
+  function clipToCar() {
+    carSamples = null;
+    if (!carMask.complete || !carMask.naturalWidth) return;
+    c.globalCompositeOperation = 'destination-in';
+    drawCover(c, carMask);
+    c.globalCompositeOperation = 'source-over';
+    const probe = document.createElement('canvas'); probe.width = w; probe.height = h;
+    const pc = probe.getContext('2d', { willReadFrequently: true });
+    drawCover(pc, carMask);
+    const md = pc.getImageData(0, 0, w, h).data;
+    carSamples = [];
+    for (let i = 3; i < md.length; i += 4 * 97) if (md[i] > 128) carSamples.push(i);
+  }
 
   function dirty() {
     const r = box.getBoundingClientRect(); w = cv.width = Math.round(r.width); h = cv.height = Math.round(r.height);
@@ -1666,6 +1758,7 @@ addEventListener('keydown', e => {
     }
     c.fillStyle = 'rgba(0,0,0,.25)'; c.font = `900 ${Math.round(w / 9)}px Inter, sans-serif`; c.textAlign = 'center';
     c.save(); c.translate(w / 2, h * .47); c.rotate(-.08); c.fillText('WASH ME', 0, 0); c.restore();
+    clipToCar();
     finished = false; done.classList.remove('is-on'); hint.style.opacity = 1; cv.style.transition = ''; cv.style.opacity = 1; update(0);
   }
   function update(v) { meter.style.width = v + '%'; pct.textContent = v + '% clean'; }
@@ -1681,7 +1774,11 @@ addEventListener('keydown', e => {
   }
   function measure() {
     const d = c.getImageData(0, 0, w, h).data; let clear = 0, tot = 0;
-    for (let i = 3; i < d.length; i += 4 * 97) { tot++; if (d[i] < 60) clear++; }
+    if (carSamples && carSamples.length) {
+      for (const i of carSamples) { tot++; if (d[i] < 60) clear++; }
+    } else {
+      for (let i = 3; i < d.length; i += 4 * 97) { tot++; if (d[i] < 60) clear++; }
+    }
     const v = Math.round(clear / tot * 100); update(v);
     if (v >= 70 && !finished) {
       finished = true; update(100); cv.style.transition = 'opacity .9s'; cv.style.opacity = 0;
