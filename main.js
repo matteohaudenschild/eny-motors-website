@@ -2243,7 +2243,7 @@ addEventListener('keydown', e => {
     { img: 'assets/photos/12-maybach-s-twotone-street.jpg', k: 'Mercedes-Maybach', n: 'S-Class Two-Tone' },
     { vid: 'bentley', k: 'Bentley', n: 'Continental GTC' },
     { img: 'assets/photos/06-cullinan-front.jpg', k: 'Rolls-Royce', n: 'Cullinan' },
-    { vid: 'rolls-interior', k: 'Rolls-Royce', n: 'Interior detail' },
+    { vid: 'lyriq-wash', k: 'Mercedes-Benz', n: 'GLE Coupé' },
     { img: 'assets/photos/14-maybach-gls-night-front.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' },
     { vid: 'g-wagon', k: 'Mercedes-AMG', n: 'G-Class' },
     { img: 'assets/photos/13-escalade-inside.jpg', k: 'Cadillac', n: 'Escalade' },
