@@ -1378,9 +1378,15 @@ function activateHeroDrive() {
   syncHeroScrollToPresentedFrame();
 }
 
-function releaseHeroDrive() {
+function releaseHeroDrive(options = {}) {
   if (!heroDriveActive) return;
-  stopHeroMotion({ clearBoundary: true });
+  if (options.keepMotion) {
+    // Flowing out of the end: the film plays its last frames out while the
+    // page already scrolls on.
+    clearHeroBoundaryLock();
+  } else {
+    stopHeroMotion({ clearBoundary: true });
+  }
   heroDriveActive = false;
   heroExpectedScrollY = null;
   if (heroExpectedScrollRaf) {
@@ -1394,14 +1400,15 @@ function releaseHeroDrive() {
   queueHeroRender();
 }
 
-function releaseHeroDriveAndScroll(pixels) {
-  releaseHeroDrive();
+function releaseHeroDriveAndScroll(pixels, options = {}) {
+  releaseHeroDrive(options);
   const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   const destination = Math.max(0, Math.min(maxScroll, window.scrollY + pixels));
   // Glide into the page instead of jumping (Lenis animates even while it is
   // still switching back on).
-  if (lenis) lenis.scrollTo(destination, { force: true, duration: 0.8, easing: t => 1 - Math.pow(1 - t, 3) });
-  else window.scrollTo({ top: destination, behavior: 'smooth' });
+  if (lenis && options.immediate) lenis.scrollTo(destination, { immediate: true, force: true });
+  else if (lenis) lenis.scrollTo(destination, { force: true, duration: 0.8, easing: t => 1 - Math.pow(1 - t, 3) });
+  else window.scrollTo({ top: destination, behavior: options.immediate ? 'auto' : 'smooth' });
 }
 
 function shouldCaptureHeroDirection(direction) {
@@ -1411,7 +1418,7 @@ function shouldCaptureHeroDirection(direction) {
     ? Math.round(heroTargetExact)
     : (targetFrame >= 0 ? targetFrame : HeroCore.progressToFrame(currentProgress, activeVariant.frameCount));
   const shown = presentedFrame >= 0 ? presentedFrame : desired;
-  if (direction > 0) return desired < lastFrame || shown < lastFrame;
+  if (direction > 0) return desired < lastFrame;
   return desired > 0 || shown > 0;
 }
 
@@ -1434,6 +1441,19 @@ function driveHeroByInput(frameDelta, exitPixels, event, profile = heroWheelProf
   const inputAt = Number.isFinite(stampedAt) && Math.abs(stampedAt - now) < 60_000
     ? stampedAt
     : now;
+
+  // At the end of the film, scrolling on flows straight into the page: as soon
+  // as the target sits on the last frame, further downward input scrolls the
+  // page (the film plays its last frames out meanwhile). No pause, no gate.
+  if (direction > 0 && heroDriveActive && activeVariant &&
+      heroTargetExact >= heroLastFrame() - 1e-6) {
+    preventHeroInput(event);
+    releaseHeroDriveAndScroll(exitPixels || HERO_PIXELS_PER_NOTCH, {
+      keepMotion: true,
+      immediate: Boolean(event && event.type === 'touchmove')   // a finger is followed 1:1
+    });
+    return true;
+  }
 
   if (!shouldCaptureHeroDirection(direction)) {
     if (!heroDriveActive) return false;
@@ -1744,7 +1764,9 @@ function initSmoothScroll() {
     smoothWheel: true,
     syncTouch: false,
     anchors: true,
-    autoToggle: true,
+    // Synchronous stop/start: with autoToggle Lenis switched back on only after
+    // a CSS transition and its reset cancelled the glide out of the hero.
+    autoToggle: false,
     respectReducedMotion: true,
     stopInertiaOnNavigate: true
   });
@@ -2317,14 +2339,14 @@ addEventListener('keydown', e => {
     { t: 'title' },
     { img: 'assets/photos/12-maybach-s-twotone-street.jpg', k: 'Mercedes-Maybach', n: 'S-Class Two-Tone' },
     { vid: 'bentley', k: 'Bentley', n: 'Continental GTC' },
-    { img: 'assets/photos/06-cullinan-front.jpg', k: 'Rolls-Royce', n: 'Cullinan' },
+    { img: 'assets/photos/04-gle63-black-front.jpg', k: 'Mercedes-AMG', n: 'GLE 63' },
     { vid: '(C)-escalade-street', k: 'Cadillac', n: 'Escalade' },
     { img: 'assets/photos/14-maybach-gls-night-front.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' },
     { vid: 'g-wagon', k: 'Mercedes-AMG', n: 'G-Class' },
     { img: 'assets/photos/08-gle43-blue-side.jpg', k: 'Mercedes-AMG', n: 'GLE 43 Coupé' },
     { vid: 'apocalypse', k: 'Apocalypse', n: '6×6' },
     { img: 'assets/photos/20-bmw-e36-street.jpg', k: 'BMW', n: 'E36 Convertible' },
-    { img: 'assets/photos/04-gle63-black-front.jpg', k: 'Mercedes-AMG', n: 'GLE 63' },
+    { vid: '(C)-cullinan-street', k: 'Rolls-Royce', n: 'Cullinan' },
     { img: 'assets/photos/02-gle53-white-front.jpg', k: 'Mercedes-AMG', n: 'GLE' },
     { img: 'assets/photos/19-maybach-gls600-rear-night.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' }
   ];
