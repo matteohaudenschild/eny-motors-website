@@ -2249,7 +2249,7 @@ addEventListener('keydown', e => {
     { img: 'assets/photos/13-escalade-inside.jpg', k: 'Cadillac', n: 'Escalade' },
     { vid: 'apocalypse', k: 'Apocalypse', n: '6×6' },
     { img: 'assets/photos/20-bmw-e36-street.jpg', k: 'BMW', n: 'E36 Convertible' },
-    { vid: 'foam-hall', k: 'Inside ENY', n: 'The wash hall' },
+    { img: 'assets/photos/04-gle63-black-front.jpg', k: 'Mercedes-AMG', n: 'GLE 63' },
     { img: 'assets/photos/02-gle53-white-front.jpg', k: 'Mercedes-AMG', n: 'GLE' },
     { img: 'assets/photos/19-maybach-gls600-rear-night.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' }
   ];
