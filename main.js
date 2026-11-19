@@ -1398,8 +1398,10 @@ function releaseHeroDriveAndScroll(pixels) {
   releaseHeroDrive();
   const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
   const destination = Math.max(0, Math.min(maxScroll, window.scrollY + pixels));
-  if (lenis) lenis.scrollTo(destination, { immediate: true, force: true });
-  else window.scrollTo(0, destination);
+  // Glide into the page instead of jumping (Lenis animates even while it is
+  // still switching back on).
+  if (lenis) lenis.scrollTo(destination, { force: true, duration: 0.8, easing: t => 1 - Math.pow(1 - t, 3) });
+  else window.scrollTo({ top: destination, behavior: 'smooth' });
 }
 
 function shouldCaptureHeroDirection(direction) {
@@ -2095,6 +2097,54 @@ if (params.get('debug') === 'perf') {
   requestAnimationFrame(tick);
 }
 
+/* ---------- soft hand-over from the hero to section 01 ----------
+   While the hero scrolls away it sinks slightly (parallax), its lower part
+   melts into the page background and the whole picture dims, so there is no
+   hard edge between the film and the next section. During the film itself
+   (exit = 0) nothing of this is visible. */
+const heroExitEl = $('.hero__exit');
+const hudEl = $('.hud');
+let heroExitRaf = 0;
+let heroExitLast = -1;
+let hudSolid = null;
+function updateHeroExit() {
+  heroExitRaf = 0;
+  if (!heroGeometry || !heroSticky) return;
+  const exit = clamp((window.scrollY - heroGeometry.end) / (window.innerHeight * 0.9));
+  if (Math.abs(exit - heroExitLast) > 0.0005) {
+    heroExitLast = exit;
+    if (heroExitEl) {
+      heroExitEl.style.opacity = Math.min(1, exit * 6).toFixed(3);
+      heroExitEl.style.setProperty('--exit-dim', (exit * 0.92).toFixed(3));
+    }
+    heroSticky.style.transform = exit > 0 ? 'translate3d(0,' + (exit * exit * 14).toFixed(2) + 'vh,0)' : '';
+  }
+  // The header gets its own dark backdrop once the page content is under it.
+  const solid = window.scrollY > heroGeometry.end + window.innerHeight * 0.6;
+  if (solid !== hudSolid) {
+    hudSolid = solid;
+    if (hudEl) hudEl.classList.toggle('is-solid', solid);
+  }
+}
+function queueHeroExit() {
+  if (!heroExitRaf) heroExitRaf = requestAnimationFrame(updateHeroExit);
+}
+addEventListener('scroll', queueHeroExit, { passive: true });
+addEventListener('resize', queueHeroExit, { passive: true });
+
+// Section 01 glides in as it comes up (content stays visible without JS).
+(() => {
+  const items = [...document.querySelectorAll('.select > .sec-tag, .select__wrap, .select__keys')];
+  if (!items.length || !('IntersectionObserver' in window)) return;
+  items.forEach((el, i) => { el.classList.add('reveal'); el.style.transitionDelay = (i * 0.12) + 's'; });
+  const io = new IntersectionObserver(entries => entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    entry.target.classList.add('is-in');
+    io.unobserve(entry.target);
+  }), { rootMargin: '0px 0px -12% 0px' });
+  items.forEach(el => io.observe(el));
+})();
+
 boot();
 
 /* ===================================================== SELECT YOUR WASH */
@@ -2268,10 +2318,10 @@ addEventListener('keydown', e => {
     { img: 'assets/photos/12-maybach-s-twotone-street.jpg', k: 'Mercedes-Maybach', n: 'S-Class Two-Tone' },
     { vid: 'bentley', k: 'Bentley', n: 'Continental GTC' },
     { img: 'assets/photos/06-cullinan-front.jpg', k: 'Rolls-Royce', n: 'Cullinan' },
-    { img: 'assets/photos/08-gle43-blue-side.jpg', k: 'Mercedes-AMG', n: 'GLE 43 Coupé' },
+    { vid: '(C)-escalade-street', k: 'Cadillac', n: 'Escalade' },
     { img: 'assets/photos/14-maybach-gls-night-front.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' },
     { vid: 'g-wagon', k: 'Mercedes-AMG', n: 'G-Class' },
-    { img: 'assets/photos/13-escalade-inside.jpg', k: 'Cadillac', n: 'Escalade' },
+    { img: 'assets/photos/08-gle43-blue-side.jpg', k: 'Mercedes-AMG', n: 'GLE 43 Coupé' },
     { vid: 'apocalypse', k: 'Apocalypse', n: '6×6' },
     { img: 'assets/photos/20-bmw-e36-street.jpg', k: 'BMW', n: 'E36 Convertible' },
     { img: 'assets/photos/04-gle63-black-front.jpg', k: 'Mercedes-AMG', n: 'GLE 63' },

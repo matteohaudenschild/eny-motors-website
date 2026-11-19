@@ -291,3 +291,15 @@ a.tile{color:inherit;text-decoration:none}
 .start{cursor:pointer}
 .start__bar{margin:38px auto 16px}
 .start__pct{color:var(--mute);font-size:11px;letter-spacing:.3em;font-variant-numeric:tabular-nums}
+
+/* ---------- v23h: soft hand-over from the hero to section 01 ---------- */
+.hero__exit{position:absolute;inset:0;z-index:6;pointer-events:none;opacity:0;
+  background:linear-gradient(rgba(5,6,7,0) 38%,var(--bg) 100%)}
+.hero__exit::after{content:"";position:absolute;inset:0;background:var(--bg);opacity:var(--exit-dim,0)}
+.hud::before{content:"";position:absolute;inset:0;z-index:-1;background:rgba(5,6,7,.88);
+  box-shadow:0 1px 0 rgba(255,255,255,.06);opacity:0;transition:opacity .5s ease;pointer-events:none}
+.hud.is-solid::before{opacity:1}
+.reveal{opacity:0;transform:translate3d(0,42px,0);
+  transition:opacity 1s cubic-bezier(.2,.7,.2,1),transform 1.1s cubic-bezier(.2,.7,.2,1)}
+.reveal.is-in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
