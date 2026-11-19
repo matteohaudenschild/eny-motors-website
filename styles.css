@@ -270,5 +270,21 @@ a.tile{color:inherit;text-decoration:none}
 .visit::before{background:linear-gradient(var(--bg),transparent 25%),linear-gradient(90deg,var(--bg) 10%,rgba(5,6,7,.4) 70%),linear-gradient(transparent 60%,var(--bg))}
 @media (max-width:760px){.foot{flex-direction:column;align-items:flex-start;gap:10px}}
 /* while the film loads the pill replaces the scroll cue */
-.hero__sticky.is-film-loading .hero__scrollcue{opacity:0!important}
 @media (max-width:430px){.beat--top .beat__kicker{letter-spacing:.1em;font-size:11px;white-space:nowrap}}
+
+/* ---------- v23: first impression and sound toggle ---------- */
+/* the hero is never black: a tiny blurred copy of the poster shows at once,
+   the sharp poster fades in over it */
+.hero__poster{background:var(--bg) url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCAASACADASIAAhEBAxEB/8QAGAAAAwEBAAAAAAAAAAAAAAAAAAQGAgX/xAAmEAACAQMEAQMFAAAAAAAAAAABAgMABBEFEiExQQYTUSJhcZGh/8QAFwEBAAMAAAAAAAAAAAAAAAAAAwABAv/EABkRAAMBAQEAAAAAAAAAAAAAAAABAhEhMf/aAAwDAQACEQMRAD8Adg9VWDcOzK3wy4/tNXOsQvAPZBJIyc1MXGlTXEscixxx45YBQM/qmLrfDGu7bn7dVVVTWaSZlPcGJrzfzK+R4UGsQhprnYzpEBg5c90abqEW+OCa1jIPAYDBoYhrkkjzisPELOvh0SAtuMDH4qa1lmMRJY5z80UUrBRrRfqgVjyc9mqG6jQEEIoPHQooo2LPp//Z") center bottom/cover no-repeat}
+@media (max-width:760px){.hero__poster{background-position:center;background-image:url("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA4KCw0LCQ4NDA0QDw4RFiQXFhQUFiwgIRokNC43NjMuMjI6QVNGOj1OPjIySGJJTlZYXV5dOEVmbWVabFNbXVn/2wBDAQ8QEBYTFioXFypZOzI7WVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVn/wAARCAAgABIDASIAAhEBAxEB/8QAGAAAAgMAAAAAAAAAAAAAAAAAAAUDBAb/xAAnEAABBAECBAcBAAAAAAAAAAABAAIDEQQSIQUxMkETFBVRYXKRof/EABcBAAMBAAAAAAAAAAAAAAAAAAECAwD/xAAeEQABBAEFAAAAAAAAAAAAAAAAAQIDERITIVFhgf/aAAwDAQACEQMRAD8A1wj2vsleZlMFl7tIHSO6SYfEsvQS0ljiLIBtQyyEjU52onc77pZZFelBihx3UaeptG3hn9QkfnoPdv8AUKei3krn0TwyPIAc3TQrlSrSSvieXCIOFV1JtLkRRig/X8BtrN5OSyN9ObINPKm2E6NoTK6LjOJvYxrRitoCuaEuGRh1uZL+hQt4Cj//2Q==")}}
+.hero__poster img{opacity:0;transition:opacity .45s ease-out}
+.hero__poster img.is-loaded{opacity:1}
+/* the film takes over from the poster with a short crossfade */
+.hero__canvas.is-fading{transition:opacity .4s ease-out}
+/* the loading pill sits above the scroll cue (both stay readable) */
+.hero__loading{bottom:118px}
+/* sound toggle: recognisable, finger-sized */
+.hud__sound{width:auto;height:auto;min-height:44px;min-width:44px;padding:10px 4px 10px 10px;align-items:center;gap:9px}
+.hud__sound b{font-size:10px;letter-spacing:.22em;text-transform:uppercase;font-weight:600;color:var(--mute)}
+.hud__sound[aria-pressed="true"] b{color:var(--mint)}
+.hud__sound i{display:flex;align-items:flex-end;gap:3px;height:16px;width:22px}

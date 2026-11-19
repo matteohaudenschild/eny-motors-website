@@ -225,7 +225,7 @@ function isAbortError(error) {
 }
 
 function setLoadProgress(progress) {
-  startBar.style.width = Math.round(clamp(progress) * 100) + '%';
+  if (startBar) startBar.style.width = Math.round(clamp(progress) * 100) + '%';
 }
 
 function validateVariant(name, value) {
@@ -423,7 +423,8 @@ function clearHeroFrameCache() {
 }
 
 function cacheHeroFrame(video, variant, frame) {
-  if (!video || !variant || video.readyState < 2) return false;
+  // `video` is the <video> element (seek path) or a WebCodecs VideoFrame.
+  if (!video || !variant || (typeof video.readyState === 'number' && video.readyState < 2)) return false;
   let canvas = heroFrameCache.get(frame);
   if (canvas) {
     heroFrameCache.delete(frame);
@@ -585,10 +586,29 @@ function ensureHeroFrames(exact, direction = 0) {
   } else {
     needed.push(Math.round(x));
   }
+  // The neighbour the picture moves into next comes before any look-ahead
+  // (on a whole frame the old order skipped it and jumped two frames).
+  if (direction > 0) {
+    const next = Math.min(lastFrame, Math.floor(x + 1e-6) + 1);
+    if (!needed.includes(next)) needed.push(next);
+  } else if (direction < 0) {
+    const prev = Math.max(0, Math.ceil(x - 1e-6) - 1);
+    if (!needed.includes(prev)) needed.push(prev);
+  }
   for (const frame of needed) {
     if (!heroFrameCache.has(frame)) {
       decodeHeroFrame(frame);
       return;
+    }
+  }
+  if (!heroMotionActive && !direction && heroCodec) {
+    // At rest (cheap with WebCodecs): have both neighbours ready, so the first
+    // step in either direction needs no decode while the decoder is idle.
+    for (const near of [hi, lo - 1]) {
+      if (near >= 0 && near <= lastFrame && !heroFrameCache.has(near)) {
+        decodeHeroFrame(near);
+        return;
+      }
     }
   }
   if (heroMotionActive && direction) {
@@ -855,8 +875,265 @@ function startOrExtendHeroMotion(frameDelta, inputAt = performance.now(), profil
   return true;
 }
 
+/* ---------- WebCodecs frame source ----------
+   The <video> element needs 3-80 ms per seek through its media pipeline (more
+   on a real screen than in tests), which made fast scrubbing lag. The hero
+   file is already in memory, so its H.264 samples are fed straight to a
+   VideoDecoder instead: frame n = its key frame (every 2nd frame) + at most
+   one delta, a few milliseconds, no seek. Browsers without WebCodecs keep the
+   seek path. */
+function parseHeroMp4(buffer) {
+  const dv = new DataView(buffer);
+  const u8 = new Uint8Array(buffer);
+  const type = off => String.fromCharCode(u8[off + 4], u8[off + 5], u8[off + 6], u8[off + 7]);
+  function boxes(start, end) {
+    const list = [];
+    let off = start;
+    while (off + 8 <= end) {
+      let size = dv.getUint32(off);
+      let header = 8;
+      if (size === 1) { size = Number(dv.getBigUint64(off + 8)); header = 16; }
+      else if (size === 0) size = end - off;
+      if (size < header || off + size > end) break;
+      list.push({ type: type(off), start: off + header, end: off + size });
+      off += size;
+    }
+    return list;
+  }
+  const child = (parent, name) => boxes(parent.start, parent.end).find(b => b.type === name);
+  const root = { start: 0, end: buffer.byteLength };
+  const moov = child(root, 'moov');
+  if (!moov) throw new Error('mp4: no moov');
+  const trak = boxes(moov.start, moov.end).filter(b => b.type === 'trak').find(t => {
+    const hdlr = child(child(t, 'mdia'), 'hdlr');
+    return hdlr && String.fromCharCode(...u8.subarray(hdlr.start + 8, hdlr.start + 12)) === 'vide';
+  });
+  if (!trak) throw new Error('mp4: no video track');
+  const stbl = child(child(child(trak, 'mdia'), 'minf'), 'stbl');
+  const stsd = child(stbl, 'stsd');
+  const entry = boxes(stsd.start + 8, stsd.end)[0];
+  if (!entry || entry.type !== 'avc1') throw new Error('mp4: not avc1');
+  const width = dv.getUint16(entry.start + 24);
+  const height = dv.getUint16(entry.start + 26);
+  const avcC = boxes(entry.start + 78, entry.end).find(b => b.type === 'avcC');
+  if (!avcC) throw new Error('mp4: no avcC');
+  const description = u8.slice(avcC.start, avcC.end);
+  const hex = v => v.toString(16).padStart(2, '0');
+  const codec = 'avc1.' + hex(description[1]) + hex(description[2]) + hex(description[3]);
+
+  const stsz = child(stbl, 'stsz');
+  const fixedSize = dv.getUint32(stsz.start + 4);
+  const count = dv.getUint32(stsz.start + 8);
+  const sizes = new Array(count);
+  for (let i = 0; i < count; i++) sizes[i] = fixedSize || dv.getUint32(stsz.start + 12 + i * 4);
+
+  const stco = child(stbl, 'stco');
+  const co64 = child(stbl, 'co64');
+  const chunkOffsets = [];
+  if (stco) {
+    const n = dv.getUint32(stco.start + 4);
+    for (let i = 0; i < n; i++) chunkOffsets.push(dv.getUint32(stco.start + 8 + i * 4));
+  } else if (co64) {
+    const n = dv.getUint32(co64.start + 4);
+    for (let i = 0; i < n; i++) chunkOffsets.push(Number(dv.getBigUint64(co64.start + 8 + i * 8)));
+  } else throw new Error('mp4: no chunk offsets');
+
+  const stsc = child(stbl, 'stsc');
+  const runs = [];
+  for (let i = 0, n = dv.getUint32(stsc.start + 4); i < n; i++) {
+    const o = stsc.start + 8 + i * 12;
+    runs.push({ first: dv.getUint32(o), perChunk: dv.getUint32(o + 4) });
+  }
+  const offsets = new Array(count);
+  let sample = 0;
+  for (let c = 0; c < chunkOffsets.length && sample < count; c++) {
+    let run = runs[0];
+    for (const r of runs) if (r.first <= c + 1) run = r;
+    let off = chunkOffsets[c];
+    for (let s = 0; s < run.perChunk && sample < count; s++) {
+      offsets[sample] = off;
+      off += sizes[sample];
+      sample += 1;
+    }
+  }
+
+  const stss = child(stbl, 'stss');
+  const keys = new Array(count).fill(!stss);
+  if (stss) {
+    for (let i = 0, n = dv.getUint32(stss.start + 4); i < n; i++) {
+      const s = dv.getUint32(stss.start + 8 + i * 4) - 1;
+      if (s >= 0 && s < count) keys[s] = true;
+    }
+  }
+  // Frame order = sample order only without B-frames (no ctts box).
+  if (child(stbl, 'ctts')) throw new Error('mp4: reordered frames not supported');
+  return { codec, description, width, height, count, sizes, offsets, keys };
+}
+
+async function openHeroCodec(blob, options = { noFlush: true, flushAfterMs: 60 }) {
+  if (typeof VideoDecoder !== 'function' || typeof EncodedVideoChunk !== 'function') return null;
+  const buffer = await blob.arrayBuffer();
+  const info = parseHeroMp4(buffer);
+  const config = {
+    codec: info.codec,
+    description: info.description,
+    codedWidth: info.width,
+    codedHeight: info.height,
+    optimizeForLatency: true
+  };
+  if (options.hardwareAcceleration) config.hardwareAcceleration = options.hardwareAcceleration;
+  const support = await VideoDecoder.isConfigSupported(config);
+  if (!support || !support.supported) return null;
+
+  let wanted = -1;
+  let lateCount = 0;
+  let decodeCount = 0;
+  let deliver = null;
+  let failed = null;
+  const decoder = new VideoDecoder({
+    output(frame) {
+      if (Math.round(frame.timestamp) === wanted && deliver) {
+        const done = deliver;
+        deliver = null;
+        done(frame);
+      } else {
+        frame.close();
+      }
+    },
+    error(error) { failed = error; }
+  });
+  decoder.configure(config);
+
+  return {
+    info,
+    get late() { return lateCount; },
+    get broken() { return Boolean(failed) || decoder.state === 'closed'; },
+    /* Resolves with a VideoFrame for film frame n (caller must close it).
+       One call at a time. */
+    async decode(n) {
+      if (failed) throw failed;
+      let key = Math.max(0, Math.min(info.count - 1, n));
+      const target = key;
+      while (key > 0 && !info.keys[key]) key -= 1;
+      wanted = target;
+      const result = new Promise(resolve => { deliver = resolve; });
+      for (let i = key; i <= target; i++) {
+        decoder.decode(new EncodedVideoChunk({
+          type: i === key ? 'key' : 'delta',
+          timestamp: i,
+          data: new Uint8Array(buffer, info.offsets[i], info.sizes[i])
+        }));
+      }
+      decodeCount += 1;
+      if (options.noFlush && decodeCount >= 12 && lateCount / decodeCount > 0.3) options.noFlush = false;
+      if (options.noFlush) {
+        // Most decoders emit the frame right away (no B-frames, low-latency
+        // mode); flush only if it has not arrived shortly.
+        const timer = new Promise(resolve => setTimeout(resolve, options.flushAfterMs || 60, 'late'));
+        const first = await Promise.race([result, timer]);
+        if (first !== 'late') return first;
+        lateCount += 1;
+      }
+      await decoder.flush();
+      if (deliver) { deliver = null; throw failed || new Error('frame ' + target + ' was not decoded'); }
+      return result;
+    },
+    close() {
+      try { if (decoder.state !== 'closed') decoder.close(); } catch (error) {}
+    }
+  };
+}
+
+
+let heroCodec = null;                          // WebCodecs source of the active film (null = seek path)
+const heroUseCodec = params.get('codec') !== '0';  // ?codec=0 forces the old seek path for comparison
+
+/* Same contract as HeroCore.createSeekCoalescer: one decode at a time, the
+   newest requested frame wins, each decoded frame goes into the cache. */
+function createCodecCoalescer(codec, variant) {
+  let desired = -1;
+  let inFlight = false;
+  let destroyed = false;
+  let lastSettled = -1;
+  const recent = [];
+  let decodes = 0;
+  function pump() {
+    if (destroyed || inFlight || desired < 0) return;
+    const frame = desired;
+    desired = -1;
+    inFlight = true;
+    lastRequestedFrame = frame;
+    const started = performance.now();
+    codec.decode(frame).then(videoFrame => {
+      inFlight = false;
+      if (destroyed || variant !== activeVariant) { videoFrame.close(); return; }
+      lastSettled = frame;
+      try {
+        cacheHeroFrame(videoFrame, variant, frame);
+      } catch (error) {
+        videoFrame.close();
+        console.warn('Drawing a WebCodecs frame failed; using video seeks instead:', error);
+        fallBackToSeekDecoder();
+        return;
+      }
+      videoFrame.close();
+      const took = performance.now() - started;
+      document.dispatchEvent(new CustomEvent('eny-decode', { detail: took }));
+      // Give up on WebCodecs only if it is slow for a sustained stretch: the
+      // warm-up decodes are ignored, single samples are capped (a long task
+      // must not count as a slow decoder) and the median of the last 30 must
+      // exceed 40 ms.
+      decodes += 1;
+      if (decodes > 3) {
+        recent.push(Math.min(took, 80));
+        if (recent.length > 30) recent.shift();
+        if (recent.length === 30) {
+          const median = recent.slice().sort((a, b) => a - b)[15];
+          if (median > 40) {
+            console.warn('WebCodecs decoding is slow here (' + Math.round(median) + ' ms); using video seeks instead.');
+            fallBackToSeekDecoder();
+            return;
+          }
+        }
+      }
+      if (!heroMotionActive) queueHeroComposite();
+      ensureHeroFrames(heroDisplayExact, heroMotionActive ? heroMotionDirection : 0);
+      pump();
+    }, error => {
+      inFlight = false;
+      if (destroyed) return;
+      console.warn('WebCodecs hero decode failed; using video seeks instead:', error);
+      fallBackToSeekDecoder();
+    });
+  }
+  return {
+    setFrame(frame) {
+      if (destroyed) return frame;
+      desired = frame;
+      pump();
+      return frame;
+    },
+    getState() {
+      return { mode: 'webcodecs', desiredFrame: desired, seekInFlight: inFlight, lastSettledFrame: lastSettled, lateFrames: codec.late, destroyed };
+    },
+    destroy() { destroyed = true; }
+  };
+}
+
+function fallBackToSeekDecoder() {
+  if (heroCodec) heroCodec.close();
+  heroCodec = null;
+  if (!heroVideo || !activeVariant) return;
+  installHeroSeekCoalescer(heroVideo, activeVariant);
+  ensureHeroFrames(heroDisplayExact, heroMotionActive ? heroMotionDirection : 0);
+}
+
 function installHeroSeekCoalescer(video, variant) {
   cancelHeroFrameRunner();
+  if (heroCodec && !heroCodec.broken) {
+    heroSeekCoalescer = createCodecCoalescer(heroCodec, variant);
+    return;
+  }
   heroSeekCoalescer = HeroCore.createSeekCoalescer(video, {
     fps: variant.fps,
     frameCount: variant.frameCount,
@@ -900,9 +1177,12 @@ function renderHeroPresentation(progress) {
   }
   lastProgress = p;
 
-  for (const beat of beats) {
-    beat.classList.toggle('is-on', p >= Number(beat.dataset.in) && p < Number(beat.dataset.out));
-  }
+  // While the film is still loading only the opening title may show (the
+  // later captions would sit over the static start poster).
+  beats.forEach((beat, index) => {
+    beat.classList.toggle('is-on', (heroReady || index === 0) &&
+      p >= Number(beat.dataset.in) && p < Number(beat.dataset.out));
+  });
   progEl.style.transform = 'scaleX(' + p + ')';
   cue.style.opacity = p > 0.02 ? 0 : 1;
 }
@@ -1252,7 +1532,8 @@ function heroDebugState() {
     motionMode: heroMotionMode,
     boundaryExitGapMs: HERO_BOUNDARY_EXIT_GAP_MS,
     inputSerial: heroMotionInputSerial,
-    decoderMode: 'paused-coalesced-canvas-proportional-v22',
+    decoderMode: heroCodec ? 'webcodecs-canvas-v23' : 'paused-seek-canvas-v22',
+    ready: heroReady,
     videoPaused: heroVideo && heroVideo.paused,
     videoTime: heroVideo && heroVideo.currentTime,
     playbackRate: heroVideo && heroVideo.playbackRate,
@@ -1331,10 +1612,20 @@ async function installVariant(key, options = {}) {
   let objectUrl = null;
   let candidate = null;
   let inserted = false;
+  let codec = null;
 
   try {
     const blob = await fetchEntireVideo(variant.src, options.onProgress || (() => {}), signal);
     if (signal.aborted || serial !== variantSerial) throw abortError();
+    if (heroUseCodec) {
+      try {
+        codec = await openHeroCodec(blob);
+      } catch (error) {
+        console.warn('WebCodecs unavailable for the hero film; using video seeks:', error);
+        codec = null;
+      }
+      if (signal.aborted || serial !== variantSerial) throw abortError();
+    }
 
     objectUrl = URL.createObjectURL(blob);
     candidate = initial ? heroVideo : createHeroVideo();
@@ -1377,6 +1668,9 @@ async function installVariant(key, options = {}) {
 
     stopHeroMotion({ clearBoundary: true });
     cancelHeroFrameRunner();
+    if (heroCodec) heroCodec.close();
+    heroCodec = codec;
+    codec = null;
     heroVideo = candidate;
     activeObjectUrl = objectUrl;
     objectUrl = null;
@@ -1398,9 +1692,20 @@ async function installVariant(key, options = {}) {
     installHeroSeekCoalescer(heroVideo, activeVariant);
     clearHeroFrameCache();
     cacheHeroFrame(heroVideo, activeVariant, installationFrame);
+    // The film takes over from the poster with a short crossfade.
+    heroCanvas.classList.add('is-fading');
+    setTimeout(() => heroCanvas.classList.remove('is-fading'), 450);
     compositeHero(installationFrame);
+    // Warm the hardware decoder up now (its first frame takes ~0.3 s) by
+    // decoding the next frame, so the visitor's first scroll is instant.
+    // Replace it with the exact frame from the codec (a <video> seek lands one
+    // frame early) - this also warms the hardware decoder up (~0.3 s cold),
+    // so the visitor's first scroll is instant.
+    if (heroCodec) heroSeekCoalescer.setFrame(installationFrame);
 
     if (!initial) {
+      previousVideo.removeAttribute('src');
+      previousVideo.load();
       previousVideo.remove();
       if (previousObjectUrl) URL.revokeObjectURL(previousObjectUrl);
     }
@@ -1408,13 +1713,18 @@ async function installVariant(key, options = {}) {
     queueHeroRender({ snap: true });
     return true;
   } catch (error) {
-    if (inserted && candidate) candidate.remove();
+    if (inserted && candidate) {
+      candidate.removeAttribute('src');
+      candidate.load();
+      candidate.remove();
+    }
     if (initial && candidate) {
       candidate.classList.remove('is-ready');
       candidate.removeAttribute('src');
       candidate.load();
     }
     if (objectUrl) URL.revokeObjectURL(objectUrl);
+    if (codec) codec.close();
     if (isAbortError(error)) return false;
     throw error;
   }
@@ -1495,13 +1805,15 @@ let startOpen = false;
 let startLeft = false;
 let filmFailed = false;
 let heroLoadPill = null;
+let heroPillTimer = 0;
+let heroFilmProgress = 0;
 const HERO_TOUCH_UI = typeof matchMedia === 'function' && matchMedia('(pointer:coarse)').matches;
 
 function showHeroLoadPill(text) {
   if (!heroLoadPill && text && heroSticky) {
     heroLoadPill = document.createElement('div');
     heroLoadPill.className = 'hero__loading';
-    heroLoadPill.setAttribute('aria-live', 'polite');
+    heroLoadPill.setAttribute('aria-hidden', 'true');   // visual only
     heroSticky.appendChild(heroLoadPill);
   }
   if (!heroLoadPill) return;
@@ -1512,31 +1824,30 @@ function showHeroLoadPill(text) {
 
 function reportFilmProgress(fraction) {
   setLoadProgress(0.05 + clamp(fraction) * 0.95);
-  if (startLeft && !heroReady && !filmFailed) showHeroLoadPill('Loading film ' + Math.round(clamp(fraction) * 100) + '%');
+  heroFilmProgress = clamp(fraction);
+  if (heroLoadPill && heroLoadPill.classList.contains('is-on') && !heroReady && !filmFailed) {
+    showHeroLoadPill('Loading film ' + Math.round(heroFilmProgress * 100) + '%');
+  }
 }
 
+/* There is no start screen any more: the page is usable right away (sound
+   stays off until the visitor turns it on in the header). */
 function openStart() {
   if (startOpen) return;
   startOpen = true;
-  $('#start').classList.add('is-open');
-  startSound.disabled = false;
-  startMute.disabled = false;
-  startSound.textContent = 'Enter with sound';
-  startMute.textContent = 'Enter silently';
-  startSound.onclick = () => leaveStart(true);
-  startMute.onclick = () => leaveStart(false);
+  leaveStart(false);
 }
 
 function leaveStart(withSound) {
   if (!startOpen || startLeft) return;
   startLeft = true;
-  if (!heroReady && !filmFailed) showHeroLoadPill('Loading film');
+  heroPillTimer = setTimeout(() => {
+    if (!heroReady && !filmFailed) showHeroLoadPill('Loading film ' + Math.round(heroFilmProgress * 100) + '%');
+  }, 800);
   if (withSound) Sound.set(true);
-  $('#start').classList.add('is-gone');
+  const start = $('#start');
+  if (start) start.classList.add('is-gone');
   document.body.classList.remove('is-loading');
-  // Start at the beginning of the hero (scroll restoration is off, see
-  // index.html); only a deliberate #anchor link may open further down.
-  if (!location.hash) window.scrollTo(0, 0);
   initSmoothScroll();
   if (lenis) lenis.resize();
   queueHeroMeasure();
@@ -1546,10 +1857,10 @@ function leaveStart(withSound) {
 function enableStart() {
   heroReady = true;
   setLoadProgress(1);
+  clearTimeout(heroPillTimer);
   openStart();
   showHeroLoadPill('');
-  // ?skip=1 (QA links) enters only once the film is ready.
-  if (params.has('skip')) leaveStart(false);
+  document.documentElement.dataset.heroReady = '1';   // QA hook: the film drives now
   if (startLeft) {
     queueHeroMeasure();
     queueHeroRender({ snap: true });
@@ -1560,14 +1871,16 @@ function showBootError(error) {
   console.error('Hero video boot failed:', error);
   heroReady = false;
   filmFailed = true;
+  clearTimeout(heroPillTimer);
   showHeroLoadPill('');
   openStart();
-  // The site stays usable over the poster; the film can be retried.
-  startHint.textContent = 'Film unavailable · the site works without it';
-  startSound.textContent = 'Retry film';
-  startSound.onclick = () => location.reload();
-  startMute.textContent = 'Enter without film';
-  if (params.has('skip')) leaveStart(false);
+  // The site stays usable over the static poster.
+}
+
+let heroVariantChangeTimer = 0;
+function queueVariantChange() {
+  clearTimeout(heroVariantChangeTimer);
+  heroVariantChangeTimer = setTimeout(handleVariantChange, 250);
 }
 
 function handleVariantChange() {
@@ -1590,19 +1903,14 @@ async function boot() {
     if (!hero || !heroSticky || !heroPoster || !heroVideo) throw new Error('The hero video markup is incomplete.');
 
     setLoadProgress(0.02);
-    if (HERO_TOUCH_UI) startHint.textContent = 'Swipe to drive';
     const response = await fetch('assets/hero/(C)-hero-video-manifest.json', { cache: 'no-cache' });
     if (!response.ok) throw new Error('Hero manifest request failed (' + response.status + ').');
     configureManifest(await response.json());
 
     heroMediaQuery = matchMedia(heroManifest.breakpoint || '(max-width: 760px)');
     measureHero();
-    // Open the start screen once the poster is decoded (at most ~5 s).
-    const posterImg = $('img', heroPoster);
-    const posterReady = posterImg && typeof posterImg.decode === 'function'
-      ? posterImg.decode().catch(() => {})
-      : Promise.resolve();
-    Promise.race([posterReady, new Promise(resolve => setTimeout(resolve, 5000))]).then(openStart);
+    // Enter right away; the film keeps loading in the background.
+    openStart();
     const key = selectedVariantKey();
     const loaded = await installVariant(key, {
       initial: true,
@@ -1611,9 +1919,9 @@ async function boot() {
     if (!loaded) throw abortError();
 
     if (typeof heroMediaQuery.addEventListener === 'function') {
-      heroMediaQuery.addEventListener('change', handleVariantChange);
+      heroMediaQuery.addEventListener('change', queueVariantChange);
     } else {
-      heroMediaQuery.addListener(handleVariantChange);
+      heroMediaQuery.addListener(queueVariantChange);
     }
 
     enableStart();
@@ -1661,6 +1969,7 @@ addEventListener('pagehide', event => {
   if (variantAbort) variantAbort.abort();
   stopHeroMotion({ clearBoundary: true });
   cancelHeroFrameRunner();
+  if (heroCodec) { heroCodec.close(); heroCodec = null; }
   if (removeLenisScrollListener) removeLenisScrollListener();
   if (lenis) lenis.destroy();
   if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
@@ -1712,6 +2021,11 @@ if (params.get('debug') === 'perf') {
   } catch (error) {}
   let seekStart = 0;
   document.addEventListener('seeking', event => { if (event.target === heroVideo) seekStart = performance.now(); }, true);
+  document.addEventListener('eny-decode', event => {
+    const zone = zoneOf(presentedFrame < 0 ? 0 : presentedFrame);
+    zone.seeks.push(event.detail);
+    if (zone.seeks.length > 400) zone.seeks.shift();
+  });
   document.addEventListener('seeked', event => {
     if (event.target !== heroVideo || !seekStart) return;
     const zone = zoneOf(presentedFrame < 0 ? 0 : presentedFrame);
@@ -1745,7 +2059,7 @@ if (params.get('debug') === 'perf') {
       paintAt = now;
       box.textContent =
         `ENY perf  ${innerWidth}x${innerHeight} @${devicePixelRatio}x  ${gpu}\n` +
-        `frame ${presentedFrame}  ${heroMotionActive ? 'bewegt' : 'steht'}\n\n` +
+        `frame ${presentedFrame}  ${heroMotionActive ? 'bewegt' : 'steht'}  decoder: ${heroCodec ? 'WebCodecs' : 'video seek'}\n\n` +
         'Teil           Refreshes  zu spät  Hänger-ms  max-ms  Bild-steht  Decode p50/p95 ms\n' +
         stats.map(s => `${s.name.padEnd(14)} ${String(s.refreshes).padStart(9)} ${String(s.late).padStart(8)} ` +
           `${String(Math.round(s.stallMs)).padStart(10)} ${String(Math.round(s.maxGap)).padStart(7)} ` +
