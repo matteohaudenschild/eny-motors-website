@@ -286,3 +286,8 @@ a.tile{color:inherit;text-decoration:none}
 .hud__sound[aria-pressed="true"] b{color:var(--mint)}
 .hud__sound i{display:flex;align-items:flex-end;gap:3px;height:16px;width:22px}
 @media (max-width:389px){.beat--top .beat__kicker{letter-spacing:.12em}}
+
+/* ---------- v23g: loading screen without buttons ---------- */
+.start{cursor:pointer}
+.start__bar{margin:38px auto 16px}
+.start__pct{color:var(--mute);font-size:11px;letter-spacing:.3em;font-variant-numeric:tabular-nums}

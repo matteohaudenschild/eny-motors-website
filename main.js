@@ -225,7 +225,10 @@ function isAbortError(error) {
 }
 
 function setLoadProgress(progress) {
-  if (startBar) startBar.style.width = Math.round(clamp(progress) * 100) + '%';
+  const pct = Math.round(clamp(progress) * 100);
+  if (startBar) startBar.style.width = pct + '%';
+  const label = $('#startPct');
+  if (label) label.textContent = pct + '%';
 }
 
 function validateVariant(name, value) {
@@ -1830,12 +1833,32 @@ function reportFilmProgress(fraction) {
   }
 }
 
-/* There is no start screen any more: the page is usable right away (sound
-   stays off until the visitor turns it on in the header). */
+/* Loading screen without buttons: it fades out by itself as soon as the film
+   is ready (shown at least HERO_LOADER_MIN_MS so it never just flashes), and
+   at the latest after HERO_LOADER_MAX_MS - slow connections get the page and
+   the "Loading film" pill instead of a long wait. A click or Enter skips it.
+   Sound stays off until the visitor turns it on in the header. */
+const HERO_LOADER_MIN_MS = 700;
+const HERO_LOADER_MAX_MS = 5000;
+let loaderShownAt = 0;
+let loaderTimer = 0;
+
 function openStart() {
   if (startOpen) return;
   startOpen = true;
-  leaveStart(false);
+  loaderShownAt = performance.now();
+  const loader = $('#start');
+  // ?skip=1 (QA links) and pages without the overlay enter immediately.
+  if (!loader || params.has('skip')) { leaveStart(false); return; }
+  loader.addEventListener('click', () => leaveStart(false));
+  loaderTimer = setTimeout(() => leaveStart(false), HERO_LOADER_MAX_MS);
+}
+
+function finishLoader() {
+  if (startLeft) return;
+  clearTimeout(loaderTimer);
+  const wait = Math.max(0, HERO_LOADER_MIN_MS - (performance.now() - loaderShownAt));
+  setTimeout(() => leaveStart(false), wait);
 }
 
 function leaveStart(withSound) {
@@ -1859,6 +1882,7 @@ function enableStart() {
   setLoadProgress(1);
   clearTimeout(heroPillTimer);
   openStart();
+  finishLoader();
   showHeroLoadPill('');
   document.documentElement.dataset.heroReady = '1';   // QA hook: the film drives now
   if (startLeft) {
@@ -1874,6 +1898,7 @@ function showBootError(error) {
   clearTimeout(heroPillTimer);
   showHeroLoadPill('');
   openStart();
+  finishLoader();
   // The site stays usable over the static poster.
 }
 
@@ -1949,7 +1974,7 @@ addEventListener('keydown', event => {
   // A focused start button decides for itself (sound or silent).
   if (event.target && event.target.closest && event.target.closest('button')) return;
   if (event.key === 'Enter' && document.body.classList.contains('is-loading') && startOpen) {
-    leaveStart(true);
+    leaveStart(false);
   }
 });
 document.addEventListener('click', event => {
@@ -2243,7 +2268,7 @@ addEventListener('keydown', e => {
     { img: 'assets/photos/12-maybach-s-twotone-street.jpg', k: 'Mercedes-Maybach', n: 'S-Class Two-Tone' },
     { vid: 'bentley', k: 'Bentley', n: 'Continental GTC' },
     { img: 'assets/photos/06-cullinan-front.jpg', k: 'Rolls-Royce', n: 'Cullinan' },
-    { vid: 'lyriq-wash', k: 'Mercedes-Benz', n: 'GLE Coupé' },
+    { img: 'assets/photos/08-gle43-blue-side.jpg', k: 'Mercedes-AMG', n: 'GLE 43 Coupé' },
     { img: 'assets/photos/14-maybach-gls-night-front.jpg', k: 'Mercedes-Maybach', n: 'GLS 600' },
     { vid: 'g-wagon', k: 'Mercedes-AMG', n: 'G-Class' },
     { img: 'assets/photos/13-escalade-inside.jpg', k: 'Cadillac', n: 'Escalade' },
